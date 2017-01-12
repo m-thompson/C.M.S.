@@ -1,0 +1,64 @@
+Line 127: Class ComctlLib.Slider of control sldrRespWtg was not a loaded control class.
+Line 309: Class ComctlLib.Slider of control sldrParent was not a loaded control class.
+Line 323: Class ComctlLib.Slider of control sldrMarriage was not a loaded control class.
+Line 337: Class ComctlLib.Slider of control sldrLoneParent was not a loaded control class.
+Line 351: Class ComctlLib.Slider of control sldrInfirmity was not a loaded control class.
+Line 365: Class ComctlLib.Slider of control sldrOverallPers was not a loaded control class.
+Line 379: Class ComctlLib.Slider of control sldrMaxWkWtg was not a loaded control class.
+Line 393: Class ComctlLib.Slider of control sldrWkWtDiff was not a loaded control class.
+Line 133: The property name _ExtentX in sldrRespWtg is invalid.
+Line 134: The property name _ExtentY in sldrRespWtg is invalid.
+Line 135: The property name _Version in sldrRespWtg is invalid.
+Line 136: The property name LargeChange in sldrRespWtg is invalid.
+Line 137: The property name Max in sldrRespWtg is invalid.
+Line 138: The property name TickStyle in sldrRespWtg is invalid.
+Line 139: The property name TickFrequency in sldrRespWtg is invalid.
+Line 315: The property name _ExtentX in sldrParent is invalid.
+Line 316: The property name _ExtentY in sldrParent is invalid.
+Line 317: The property name _Version in sldrParent is invalid.
+Line 318: The property name LargeChange in sldrParent is invalid.
+Line 319: The property name Max in sldrParent is invalid.
+Line 320: The property name TickStyle in sldrParent is invalid.
+Line 321: The property name TickFrequency in sldrParent is invalid.
+Line 329: The property name _ExtentX in sldrMarriage is invalid.
+Line 330: The property name _ExtentY in sldrMarriage is invalid.
+Line 331: The property name _Version in sldrMarriage is invalid.
+Line 332: The property name LargeChange in sldrMarriage is invalid.
+Line 333: The property name Max in sldrMarriage is invalid.
+Line 334: The property name TickStyle in sldrMarriage is invalid.
+Line 335: The property name TickFrequency in sldrMarriage is invalid.
+Line 343: The property name _ExtentX in sldrLoneParent is invalid.
+Line 344: The property name _ExtentY in sldrLoneParent is invalid.
+Line 345: The property name _Version in sldrLoneParent is invalid.
+Line 346: The property name LargeChange in sldrLoneParent is invalid.
+Line 347: The property name Max in sldrLoneParent is invalid.
+Line 348: The property name TickStyle in sldrLoneParent is invalid.
+Line 349: The property name TickFrequency in sldrLoneParent is invalid.
+Line 357: The property name _ExtentX in sldrInfirmity is invalid.
+Line 358: The property name _ExtentY in sldrInfirmity is invalid.
+Line 359: The property name _Version in sldrInfirmity is invalid.
+Line 360: The property name LargeChange in sldrInfirmity is invalid.
+Line 361: The property name Max in sldrInfirmity is invalid.
+Line 362: The property name TickStyle in sldrInfirmity is invalid.
+Line 363: The property name TickFrequency in sldrInfirmity is invalid.
+Line 371: The property name _ExtentX in sldrOverallPers is invalid.
+Line 372: The property name _ExtentY in sldrOverallPers is invalid.
+Line 373: The property name _Version in sldrOverallPers is invalid.
+Line 374: The property name LargeChange in sldrOverallPers is invalid.
+Line 375: The property name Max in sldrOverallPers is invalid.
+Line 376: The property name TickStyle in sldrOverallPers is invalid.
+Line 377: The property name TickFrequency in sldrOverallPers is invalid.
+Line 385: The property name _ExtentX in sldrMaxWkWtg is invalid.
+Line 386: The property name _ExtentY in sldrMaxWkWtg is invalid.
+Line 387: The property name _Version in sldrMaxWkWtg is invalid.
+Line 388: The property name LargeChange in sldrMaxWkWtg is invalid.
+Line 389: The property name Max in sldrMaxWkWtg is invalid.
+Line 390: The property name TickStyle in sldrMaxWkWtg is invalid.
+Line 391: The property name TickFrequency in sldrMaxWkWtg is invalid.
+Line 399: The property name _ExtentX in sldrWkWtDiff is invalid.
+Line 400: The property name _ExtentY in sldrWkWtDiff is invalid.
+Line 401: The property name _Version in sldrWkWtDiff is invalid.
+Line 402: The property name LargeChange in sldrWkWtDiff is invalid.
+Line 403: The property name Max in sldrWkWtDiff is invalid.
+Line 404: The property name TickStyle in sldrWkWtDiff is invalid.
+Line 405: The property name TickFrequency in sldrWkWtDiff is invalid.

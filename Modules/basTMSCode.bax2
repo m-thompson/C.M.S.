@@ -1,0 +1,2707 @@
+Attribute VB_Name = "basTMSCode"
+Option Explicit
+Dim theitems As String, FilePath As String
+Public NextPrevDates() As TMSPersonAndNextPrevDates
+Dim mbBroOnlyTalkFound As Boolean
+
+Public Type TMSPersonAndNextPrevDates
+    ThePersonID As Long
+    NextPrevInfo(23) As String
+End Type
+
+Public Function GetTMSItemsRecordset(TMSYear As Integer) As Recordset
+Dim SQLStr As String
+'
+'Put all TMS items for supplied year into a recordset.
+'
+
+On Error GoTo ErrorTrap
+
+    SQLStr = "SELECT AssignmentDate, " & _
+            "TalkNo, " & _
+            "TalkSeqNum, " & _
+            "TalkTheme, " & _
+            "SourceMaterial, " & _
+            "DifficultyRating0to5, " & _
+            "BrotherOnly, " & _
+            "ItemsSeqNum " & _
+            "FROM tblTMSItems " & _
+            "WHERE Year(AssignmentDate) = " & TMSYear & _
+            " ORDER BY AssignmentDate, TalkSeqNum"
+    
+    Set GetTMSItemsRecordset = CMSDB.OpenRecordset(SQLStr, dbOpenDynaset)
+
+    Exit Function
+ErrorTrap:
+    EndProgram
+    
+End Function
+
+
+Public Sub GetTMSScheduleRecordset(TMSYear As Long, TMSMonth As Long, SchoolNum As Long, rstItems As Recordset, rstStudents As Recordset)
+Dim SQLStr As String, StartDate As String, EndDate As String, PieceOfSQL As String
+'
+'Put all items for supplied year and month into a recordset.
+' Include first week of the next month to tie in with the Service Meeting Schedule
+'
+'Then put all students assigned to items into another recset
+'
+
+On Error GoTo ErrorTrap
+
+    Select Case True
+    Case frmTMSScheduling.opt1Month
+        StartDate = Format$(CStr(DateOfNthDay(vbMonday, TMSYear, TMSMonth, 1)), "mm/dd/yyyy")
+    
+        If TMSMonth < 12 Then
+            EndDate = Format$(CStr(DateOfNthDay(vbMonday, TMSYear, TMSMonth + 1, 1)), "mm/dd/yyyy")
+        Else
+            EndDate = Format$(CStr(DateOfNthDay(vbMonday, TMSYear + 1, 1, 1)), "mm/dd/yyyy")
+        End If
+    Case frmTMSScheduling.opt1Year
+        '
+        'Use TMSYear and TMSMonth to find dates 6 months ago/ahead
+        '
+        StartDate = DateAdd("m", -6, DateSerial(TMSYear, TMSMonth, 1))
+        StartDate = Format$(CStr(DateOfNthDay(vbMonday, year(CDate(StartDate)), Month(CDate(StartDate)), 1)), "mm/dd/yyyy")
+        EndDate = DateAdd("m", 6, DateSerial(TMSYear, TMSMonth, 1))
+        EndDate = Format$(CStr(DateOfNthDay(vbMonday, year(CDate(EndDate)), Month(CDate(EndDate)), 1)), "mm/dd/yyyy")
+    End Select
+
+    Select Case SchoolNum
+    Case 1:
+        PieceOfSQL = ""
+    Case 2, 3:
+        PieceOfSQL = " AND TalkNo NOT IN ('S', '1', 'B', 'P') "
+    End Select
+    
+    SQLStr = "SELECT tblTMSItems.AssignmentDate, " & _
+            "tblTMSItems.TalkNo, " & _
+            "tblTMSItems.TaskNo, " & _
+            "tblTMSItems.DifficultyRating0to5, " & _
+            "tblTMSItems.BrotherOnly, " & _
+            "tblTMSItems.SourceMaterial, " & _
+            "tblTMSItems.TalkTheme, " & _
+            "tblTMSItems.ItemsSeqNum, " & _
+            "tblTMSItems.TalkSeqNum " & _
+            "FROM tblTMSItems " & _
+            "WHERE tblTMSItems.AssignmentDate BETWEEN #" & StartDate & "# AND #" & EndDate & "# " & _
+            PieceOfSQL & _
+            " ORDER BY tblTMSItems.AssignmentDate, tblTMSItems.TalkSeqNum"
+    
+
+    Set rstItems = CMSDB.OpenRecordset(SQLStr, dbOpenDynaset)
+
+
+    SQLStr = "SELECT tblTMSSchedule.AssignmentDate, " & _
+            "tblTMSSchedule.TalkNo, " & _
+            "tblTMSSchedule.PersonID, " & _
+            "tblTMSSchedule.Assistant1ID, " & _
+            "tblTMSSchedule.SchoolNo, " & _
+            "tblTMSSchedule.Setting, " & _
+            "tblTMSSchedule.ScheduleSeqNum, " & _
+            "tblTMSSchedule.SlipPrinted " & _
+            "FROM tblTMSSchedule " & _
+            "WHERE tblTMSSchedule.AssignmentDate BETWEEN #" & StartDate & "# AND #" & EndDate & "# " & _
+            PieceOfSQL
+
+            
+
+    Set rstStudents = CMSDB.OpenRecordset(SQLStr, dbOpenDynaset)
+
+    Exit Sub
+ErrorTrap:
+    EndProgram
+    
+End Sub
+
+Public Function ItemAlreadyExists(AssignmentDate As Date, TalkNo As String) As Boolean
+Dim rstFindItem As Recordset, SQLStr As String
+
+On Error GoTo ErrorTrap
+
+    SQLStr = "SELECT AssignmentDate, " & _
+            "TalkNo, " & _
+            "TalkTheme, " & _
+            "SourceMaterial, " & _
+            "DifficultyRating0to5, " & _
+            "BrotherOnly, " & _
+            "ItemsSeqNum " & _
+            "FROM tblTMSItems " & _
+            "WHERE AssignmentDate = #" & Format(AssignmentDate, "mm/dd/yyyy") & "# " & _
+            "AND TalkNo = '" & TalkNo & "'"
+    
+    Set rstFindItem = CMSDB.OpenRecordset(SQLStr, dbOpenDynaset)
+    
+    If rstFindItem.BOF Then
+        ItemAlreadyExists = False
+    Else
+        ItemAlreadyExists = True
+    End If
+    
+    rstFindItem.Close
+    
+
+
+
+    Exit Function
+ErrorTrap:
+    EndProgram
+    
+End Function
+
+Public Sub FillTMSItemsGrid()
+'
+'"Items" are just the talk details. Assigned students are on the "Schedule"
+'
+Dim i As Byte, j As Integer
+
+On Error GoTo ErrorTrap
+
+'
+'Populate grid from recordset
+'
+     'clear grid's non-fixed rows
+    frmTMSItems!flxTMSItems.Rows = 1
+    
+    With rstTMSItems
+            
+    If Not .BOF Then
+        .MoveFirst
+        j = 1
+        Do Until .EOF
+            frmTMSItems!flxTMSItems.Rows = j + 1
+            frmTMSItems!flxTMSItems.TextMatrix(j, 0) = !AssignmentDate
+            frmTMSItems!flxTMSItems.TextMatrix(j, 1) = !TalkNo
+            frmTMSItems!flxTMSItems.TextMatrix(j, 2) = !TalkTheme
+            frmTMSItems!flxTMSItems.TextMatrix(j, 3) = !SourceMaterial
+'            frmTMSItems!flxTMSItems.TextMatrix(j, 4) = !DifficultyRating0to5
+            
+            If !BrotherOnly = False Then
+                frmTMSItems!flxTMSItems.TextMatrix(j, 4) = ""
+            Else
+                frmTMSItems!flxTMSItems.TextMatrix(j, 4) = "Yes"
+            End If
+               
+            frmTMSItems!flxTMSItems.TextMatrix(j, 5) = !ItemsSeqNum
+                      
+            j = j + 1
+            .MoveNext
+        Loop
+    End If
+        
+    End With
+    
+    With frmTMSItems!flxTMSItems
+    For j = 0 To .Rows - 1
+        .Row = j
+        For i = 0 To .Cols - 1
+            .col = i
+            .CellForeColor = QBColor(0) 'set all cells to black text
+        Next i
+    Next j
+    
+    If .Rows > 1 Then 'ie more than just the 2 fixed rows
+        .Row = 1
+        .col = 0
+        frmTMSItems.PreviousRow = .Row  'ready for click event when we mess about with row colours
+    End If
+    End With
+
+    With frmTMSItems
+    '
+    'Allow all cells in date column to merge
+    '
+    !flxTMSItems.MergeCol(0) = True
+    
+    !cmdDeleteItem.Enabled = False
+    !cmdEditItem.Enabled = False
+    !chkDeleteAll = vbUnchecked
+    
+    If FormIsOpen("frmTMSAddItems") Then
+        SetTopRowOfGridToWeek .flxTMSItems, 5, 0, CDate(frmTMSAddItems.txtAssignmentDate)
+    Else
+        SetTopRowOfGridToWeek .flxTMSItems, 5, 0
+    End If
+    
+    End With
+    
+
+    Exit Sub
+ErrorTrap:
+    EndProgram
+    
+End Sub
+
+
+Public Sub FillTMSScheduleGrid()
+'
+'Put student names to the items....
+'
+Dim j As Long, SchoolNum As Long, PersonStore As String, PrevDate As Date
+Dim IsAssemblyWeek As Boolean, IsMovedOralReview As Boolean, IsCOVisitWeek As Boolean
+Dim IsMemorialNight As Boolean, rsttmsquery As Recordset, TheCong As Long, OverrideWritten As Boolean
+Dim NothingWritten As Boolean, IsOralReview As Boolean, NextWeekIsMovedOralReview As Boolean
+Dim SQLStr As String
+
+On Error GoTo ErrorTrap
+
+'
+'Populate grid from recordsets
+'
+     'clear grid's non-fixed rows
+    frmTMSScheduling!flxTMSSchedule.Rows = 1
+    
+    Select Case True
+    Case frmTMSScheduling!opt1stSchool:
+        SchoolNum = 1
+    Case frmTMSScheduling!opt2ndSchool:
+        SchoolNum = 2
+    Case frmTMSScheduling!opt3rdSchool:
+        SchoolNum = 3
+    End Select
+    
+    TheCong = GlobalParms.GetValue("DefaultCong", "NumVal")
+    
+    With rstTMSSchedule
+        
+    PrevDate = 0
+        
+    If Not .BOF Then
+        .MoveFirst
+        j = 1
+        Do Until .EOF
+        
+            If PrevDate <> !AssignmentDate Then
+            '
+            'On date change, see if any assembly/moved oral review/CO visit will
+            ' change the school scheduling for that week
+            '
+                OverrideWritten = False
+                '
+                'First check for moved Oral Review. An Oral Review will ONLY appear in
+                ' tblTMSSchedule if it has been moved from it's normal week due to eg
+                ' a CO visit....
+                '
+                Set rsttmsquery = CMSDB.OpenRecordset("SELECT AssignmentDate " & _
+                                                   "FROM tblTMSSchedule " & _
+                                                   "WHERE AssignmentDate = #" & Format(!AssignmentDate, "mm/dd/yyyy") & _
+                                                    "# AND TalkNo = 'MR'" _
+                                                   , dbOpenSnapshot)
+                                                   
+                If rsttmsquery.BOF Then
+                    IsMovedOralReview = False
+                Else
+                    IsMovedOralReview = True
+                End If
+                
+                '
+                'Now check if NEXT week has Moved oral Review...
+                '
+                Set rsttmsquery = CMSDB.OpenRecordset("SELECT AssignmentDate " & _
+                                                   "FROM tblTMSSchedule " & _
+                                                    "WHERE AssignmentDate = #" & Format(!AssignmentDate + 7, "mm/dd/yyyy") & _
+                                                    "# AND TalkNo = 'MR'" _
+                                                   , dbOpenSnapshot)
+                                                   
+                If rsttmsquery.BOF Then
+                    NextWeekIsMovedOralReview = False
+                Else
+                    NextWeekIsMovedOralReview = True
+                End If
+                
+                '
+                'Is this Oral Review week?
+                '
+                Set rsttmsquery = CMSDB.OpenRecordset("SELECT AssignmentDate " & _
+                                                   "FROM tblTMSItems " & _
+                                                   "WHERE AssignmentDate = #" & Format(!AssignmentDate, "mm/dd/yyyy") & _
+                                                   "# AND TalkNo = 'R'" _
+                                                   , dbOpenSnapshot)
+                                                   
+                If rsttmsquery.BOF Then
+                    IsOralReview = False
+                Else
+                    IsOralReview = True
+                End If
+                                                   
+                '
+                'Now check Calendar for assembly this week...
+                ' (Only check for Circuit & District Assembly - School is as normal
+                ' for Special Assembly days)
+                '
+                Select Case DatePart("ww", !AssignmentDate, vbMonday)
+                Case 1
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE (DatePart('ww',EventStartDate,2) = 1 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                    ") OR (DatePart('ww',EventStartDate,2) = 53 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) - 1 & _
+                                                     ") AND EventID IN (1, 3) " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                Case 53
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE (DatePart('ww',EventStartDate,2) = 1 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) + 1 & _
+                                                    ") OR (DatePart('ww',EventStartDate,2) = 53 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                     ") AND EventID IN (1, 3) " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                Case Else
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE DatePart('ww',EventStartDate,2) = " & DatePart("ww", !AssignmentDate, vbMonday) & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                     " AND EventID IN (1, 3) " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                End Select
+                                                   
+                If rsttmsquery.BOF Then
+                    IsAssemblyWeek = False
+                Else
+                    IsAssemblyWeek = True
+                End If
+                                                   
+                '
+                'Now check Calendar for CO Visit this week...
+                '
+                Select Case DatePart("ww", !AssignmentDate, vbMonday)
+                Case 1
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE (DatePart('ww',EventStartDate,2) = 1 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                    ") OR (DatePart('ww',EventStartDate,2) = 53 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) - 1 & _
+                                                     ") AND EventID = 4 " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                Case 53
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE (DatePart('ww',EventStartDate,2) = 1 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) + 1 & _
+                                                    ") OR (DatePart('ww',EventStartDate,2) = 53 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                     ") AND EventID = 4 " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                Case Else
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE DatePart('ww',EventStartDate,2) = " & DatePart("ww", !AssignmentDate, vbMonday) & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                     " AND EventID = 4 " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                End Select
+                                                   
+                If rsttmsquery.BOF Then
+                    IsCOVisitWeek = False
+                Else
+                    IsCOVisitWeek = True
+                End If
+            
+                '
+                'Now check tblTMSSchedule for Memorial on meeting night.
+                '
+                Select Case DatePart("ww", !AssignmentDate, vbMonday)
+                Case 1
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE (DatePart('ww',EventStartDate,2) = 1 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                    ") OR (DatePart('ww',EventStartDate,2) = 53 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) - 1 & _
+                                                     ") AND EventID = 6 " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                Case 53
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE (DatePart('ww',EventStartDate,2) = 1 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) + 1 & _
+                                                    ") OR (DatePart('ww',EventStartDate,2) = 53 " & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                     ") AND EventID = 6 " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                Case Else
+                    Set rsttmsquery = CMSDB.OpenRecordset("SELECT EventStartDate " & _
+                                                    "FROM tblEvents " & _
+                                                    "WHERE DatePart('ww',EventStartDate,2) = " & DatePart("ww", !AssignmentDate, vbMonday) & _
+                                                    " AND DatePart('yyyy',EventStartDate,2) = " & DatePart("yyyy", !AssignmentDate, vbMonday) & _
+                                                     " AND EventID = 6 " & _
+                                                     " AND CongNo = " & TheCong, _
+                                                    , dbOpenSnapshot)
+                End Select
+'
+                If Not rsttmsquery.BOF Then
+                    If Weekday(rsttmsquery!EventStartDate, vbSunday) = GlobalParms.GetValue("MidWeekMeetingDay", "NumVal") Then
+                        IsMemorialNight = True
+                    Else
+                        IsMemorialNight = False
+                    End If
+                Else
+                    IsMemorialNight = False
+                End If
+                
+                rsttmsquery.Close
+            
+            End If
+            
+    '
+    'Get all items for specified period from rstTMSSchedule
+    '
+            
+            Select Case True
+            Case IsAssemblyWeek
+                If Not OverrideWritten Then
+                    FillCells j, "A", "Assembly", SchoolNum
+                    NothingWritten = False
+                    OverrideWritten = True
+                Else
+                    NothingWritten = True
+                End If
+            Case IsMemorialNight
+                If Not OverrideWritten Then
+                    FillCells j, "M", "Memorial", SchoolNum
+                    NothingWritten = False
+                    OverrideWritten = True
+                Else
+                    NothingWritten = True
+                End If
+            Case IsCOVisitWeek
+                Select Case !TalkNo
+                Case "P", "B", "1"
+                    FillCells j, "", "", SchoolNum
+                    NothingWritten = False
+                Case "S"
+                    FillCells j, "", "", SchoolNum
+                    NothingWritten = False
+                    
+                    If NextWeekIsMovedOralReview Then
+                        'Put next week's #1 this week
+                        j = j + 1
+                        FillCells j, "1", "", SchoolNum
+                        NothingWritten = False
+                    End If
+                Case Else
+                    If Not OverrideWritten Then
+                        FillCells j, "CO", "Circuit Visit", SchoolNum
+                        NothingWritten = False
+                        OverrideWritten = True
+                    Else
+                        NothingWritten = True
+                    End If
+                End Select
+            Case IsMovedOralReview
+                Select Case !TalkNo
+                Case "P", "S", "B"
+                    FillCells j, "", "", SchoolNum
+                    NothingWritten = False
+                Case "1"
+                    NothingWritten = True
+                Case Else
+                    If Not OverrideWritten Then
+                        FillCells j, "MR", "Oral Review (Moved)", SchoolNum
+                        NothingWritten = False
+                        OverrideWritten = True
+                    Else
+                        NothingWritten = True
+                    End If
+                End Select
+            Case Else
+                FillCells j, "", "", SchoolNum
+                NothingWritten = False
+            End Select
+            
+            If Not NothingWritten Then
+                j = j + 1
+            End If
+            PrevDate = !AssignmentDate
+            .MoveNext
+        Loop
+    End If
+        
+    End With
+    
+    With frmTMSScheduling!flxTMSSchedule
+    
+    If .Rows > 1 Then 'ie more than just the 1 fixed row
+        .Row = 1
+        .col = 0
+        frmTMSScheduling.PreviousRow = .Row  'ready for click event when we mess about with row colours
+    End If
+    
+    
+    End With
+
+    Exit Sub
+ErrorTrap:
+    EndProgram
+    
+End Sub
+            
+Public Sub FillCells(TheRow As Long, OverrideTalkNo As String, OverrideEventName As String, SchoolNum As Long)
+Dim j As Long, PersonStore As String
+On Error GoTo ErrorTrap
+            
+    j = TheRow
+    
+    
+    With rstTMSSchedule
+    
+    frmTMSScheduling!flxTMSSchedule.Rows = j + 1
+    frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 0) = Format$(!AssignmentDate, "dd/mm/yyyy")
+    
+    Select Case OverrideTalkNo
+    Case ""
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 1) = !TalkNo
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 4) = !ItemsSeqNum
+        '
+        'Now search rstTMSStudents to determine whether a student has been assigned
+        ' to rstTMSSchedule's current item. If so, put them on grid.
+        '
+        rstTMSStudents.FindFirst "Assignmentdate = #" & Format$(!AssignmentDate, "mm/dd/yyyy") & _
+                    "# AND TalkNo = '" & !TalkNo & "' AND SchoolNo = " & SchoolNum
+                  
+        With rstTMSStudents
+        If .NoMatch Then
+            frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 2) = ""
+            frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 3) = ""
+        Else
+            PersonStore = CongregationMember.FullName(!PersonID, False)
+            If Left$(PersonStore, 1) = "?" Then
+                frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 2) = ""
+            Else
+                frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 2) = PersonStore
+                '
+                'Highlight name in blue if it matches Search criteria for student
+                '
+                If lnkTMSScheduleSearchStarted Then
+                    If lnkTMSScheduleSearch(frmTMSScheduling.CurrentSearchIndex).TheAssignmentDate = !AssignmentDate And _
+                       lnkTMSScheduleSearch(frmTMSScheduling.CurrentSearchIndex).TheSchool = SchoolNum And _
+                       lnkTMSScheduleSearch(frmTMSScheduling.CurrentSearchIndex).ThePersonID = !PersonID Then
+                            frmTMSScheduling!flxTMSSchedule.Row = j
+                            frmTMSScheduling!flxTMSSchedule.col = 2
+                            frmTMSScheduling!flxTMSSchedule.CellForeColor = vbBlue
+                            If j > 10 Then
+                                frmTMSScheduling.TheTopRow = j - 10
+                            Else
+                                frmTMSScheduling.TheTopRow = j
+                            End If
+                    End If
+                End If
+            End If
+            
+            PersonStore = CongregationMember.FullName(!Assistant1ID, False)
+            If Left$(PersonStore, 1) = "?" Then
+                frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 3) = ""
+            Else
+                frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 3) = PersonStore
+                '
+                'Highlight name in blue if it matches Search criteria for assistant
+                '
+                If lnkTMSScheduleSearchStarted Then
+                    If lnkTMSScheduleSearch(frmTMSScheduling.CurrentSearchIndex).TheAssignmentDate = !AssignmentDate And _
+                       lnkTMSScheduleSearch(frmTMSScheduling.CurrentSearchIndex).TheSchool = SchoolNum And _
+                       lnkTMSScheduleSearch(frmTMSScheduling.CurrentSearchIndex).ThePersonID = !Assistant1ID Then
+                            frmTMSScheduling!flxTMSSchedule.Row = j
+                            frmTMSScheduling!flxTMSSchedule.col = 3
+                            frmTMSScheduling!flxTMSSchedule.CellForeColor = vbBlue
+                            If j > 10 Then
+                                frmTMSScheduling.TheTopRow = j - 10
+                            Else
+                                frmTMSScheduling.TheTopRow = j
+                            End If
+                    End If
+                End If
+            End If
+            
+        End If
+        
+        End With
+    Case "1" 'CO Visit week on what should be Oral Review week (Review moved to next week)
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 1) = OverrideTalkNo
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 4) = -1
+        rstTMSStudents.FindFirst "Assignmentdate = #" & Format$(!AssignmentDate, "mm/dd/yyyy") & _
+                    "# AND TalkNo = '1' AND SchoolNo = " & SchoolNum
+        If rstTMSStudents.NoMatch Then
+            PersonStore = "?"
+        Else
+            PersonStore = CongregationMember.FullName(rstTMSStudents!PersonID)
+        End If
+        If Left$(PersonStore, 1) = "?" Then
+            frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 2) = ""
+        Else
+            frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 2) = PersonStore
+        End If
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 3) = ""
+    Case Else
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 1) = OverrideTalkNo
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 4) = -1
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 2) = OverrideEventName
+    End Select
+    
+    '
+    'Now show whether assignments slip has been printed. "Y" is yes (obviously),
+    ' "N" is no where the slip SHOULD be printed. Blank indicates that the
+    ' assignment isn't one for which a slip is required...eg "P" or "R" etc
+    '
+    If Not rstTMSStudents.NoMatch Then
+        Select Case !TalkNo
+        Case "S", "1", "B", "2", "3", "4"
+            If (OverrideTalkNo = "" Or OverrideTalkNo = "1") _
+                And rstTMSStudents!PersonID > 0 Then
+                If rstTMSStudents!SlipPrinted = True Then
+                    frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 5) = "Y"
+                Else
+                    frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 5) = "N"
+                End If
+            Else
+                frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 5) = ""
+            End If
+        Case Else
+            frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 5) = ""
+        End Select
+    Else
+        frmTMSScheduling!flxTMSSchedule.TextMatrix(j, 5) = ""
+    End If
+    
+    End With
+
+    Exit Sub
+ErrorTrap:
+    EndProgram
+    
+End Sub
+            
+
+Public Sub FillTMSStudentGrid(TheGrid As MSFlexGrid)
+'
+'This grid allows replacement student to be picked.
+'
+'This proc is executed for both flxInsertStudent and flxInsertAssistant, depending on
+' the parm. When executed for flsInsertStudent, Prev/Next dates are acquired from the DB]
+' via the TMSPrevDateFAST and TMSNextDateFAST methods. These are stored in array NextPrevDates().
+' This array has elements of Type TMSPersonAndNextPrevDates, one for each Student to
+' be dislayed on the grid. Each student has a set of 23 elements in the UDT, each element storing
+' a Next/Prev date/school. This stored data is then used to populate flxInsertAssistant.
+'
+Dim CurrentAssignmentDate As Date, CurrentTalkNo As String
+Dim rstStudentList As Recordset, SQLStr As String, BroOnlyFlag As Boolean, SchoolNum As Long
+Dim SchoolNumForSQL As Long, CurrentTalkNoForSQL As Long, i As Long, PersonStore As String
+Dim ActualTalkDate As Date, OrderingSQL As String, PrevDates() As Variant, n As Integer
+Dim a As String, BroOnlySQL As String, SuspendDateSQL As String, NextDates() As Variant
+Dim AverageWeighting As Long, rstAvWtg As Recordset, NoPersons As Long, j As Long
+Dim TheGridName As String, BookGroupFilter As String, BookGroupFilter2 As String
+Dim BookGroupFilter3 As String
+
+On Error GoTo ErrorTrap
+
+    Screen.MousePointer = vbHourglass
+    
+    TheGridName = TheGrid.Name
+
+    With frmTMSScheduling
+    '
+    'Need to use the actual TaskNo for the school-no a student is able to have talks in
+    ' Required for the SQL later...
+    '
+    Select Case True
+    Case !opt1stSchool:
+        SchoolNum = 1
+        SchoolNumForSQL = 44
+    Case !opt2ndSchool:
+        SchoolNum = 2
+        SchoolNumForSQL = 45
+    Case !opt3rdSchool:
+        SchoolNum = 3
+        SchoolNumForSQL = 46
+    End Select
+    
+    Select Case !lblBroOnly.Caption
+    Case "Yes":
+        BroOnlyFlag = True
+    Case "":
+        BroOnlyFlag = False
+    End Select
+    
+    CurrentTalkNo = !flxTMSSchedule.TextMatrix(!flxTMSSchedule.Row, 1)
+    CurrentAssignmentDate = CDate(!flxTMSSchedule.TextMatrix(!flxTMSSchedule.Row, 0))
+    
+    If TheGridName = "flxInsertStudent" Then
+        frmTMSInsertStudent!lblCurrentStudent = !flxTMSSchedule.TextMatrix(!flxTMSSchedule.Row, 2)
+        frmTMSInsertStudent!lblCurrentAssistant = !flxTMSSchedule.TextMatrix(!flxTMSSchedule.Row, 3)
+        frmTMSInsertStudent!lblCurrentStudent2 = !flxTMSSchedule.TextMatrix(!flxTMSSchedule.Row, 2)
+        frmTMSInsertStudent!lblCurrentAssistant2 = !flxTMSSchedule.TextMatrix(!flxTMSSchedule.Row, 3)
+        frmTMSInsertStudent!lblAssignmentDate = Format$(CurrentAssignmentDate, "dd/mm/yyyy")
+        frmTMSInsertStudent!lblAssignmentDate2 = Format$(CurrentAssignmentDate, "dd/mm/yyyy")
+        frmTMSInsertStudent!lblSchool1 = SchoolNum
+        frmTMSInsertStudent!lblSchool2 = SchoolNum
+        frmTMSInsertStudent!lblThemeDisplay = !lblThemeDisplay
+        frmTMSInsertStudent!lblThemeDisplay2 = !lblThemeDisplay
+        frmTMSInsertStudent!lblSetting = !lblSetting
+        frmTMSInsertStudent!lblSetting2 = !lblSetting
+        frmTMSInsertStudent!lblSourceDisplay = !lblSourceDisplay
+        frmTMSInsertStudent!lblSourceDisplay2 = !lblSourceDisplay
+        frmTMSInsertStudent!lblBroOnly = !lblBroOnly
+        
+        With frmTMSInsertStudent
+        '
+        'Display TalkNo description on form
+        '
+        Select Case CurrentTalkNo
+        Case "P":
+            !lblAssignment = "Opening Prayer"
+            !lblAssignment2 = "Opening Prayer"
+        Case "S":
+            !lblAssignment = "Speech Quality Talk"
+            !lblAssignment2 = "Speech Quality Talk"
+        Case "1":
+            !lblAssignment = "Talk No 1"
+            !lblAssignment2 = "Talk No 1"
+        Case "B":
+            !lblAssignment = "Bible Highlights"
+            !lblAssignment2 = "Bible Highlights"
+        Case "2":
+            !lblAssignment = "Reading Assignment"
+            !lblAssignment2 = "Reading Assignment"
+        Case "3":
+            !lblAssignment = "Talk No 3"
+            !lblAssignment2 = "Talk No 3"
+        Case "4":
+            !lblAssignment = "Talk No 4"
+            !lblAssignment2 = "Talk No 4"
+        Case Else:
+            !lblAssignment = ""
+            !lblAssignment2 = ""
+        
+        End Select
+        End With
+        
+        With frmTMSInsertStudent
+        .FormAssignmentDate = CurrentAssignmentDate
+        .FormSchoolNo = SchoolNum
+        .FormTalkNo = CurrentTalkNo
+        .FormStudent = TheTMS.GetTMSStudent(CurrentAssignmentDate, CurrentTalkNo, SchoolNum)
+        .FormAssistant = TheTMS.GetTMSAssistant(CurrentAssignmentDate, CurrentTalkNo, SchoolNum)
+        End With
+    End If
+    
+    End With
+       
+    
+    ActualTalkDate = Format(GetDateOfGivenDay(CurrentAssignmentDate, _
+                        GlobalParms.GetValue("MidWeekMeetingDay", "NumVal")), "mm/dd/yyyy")
+    
+    
+    Select Case frmTMSInsertStudent.chkBrothersOnly.value
+    Case vbChecked
+        BroOnlySQL = " AND tblNameAddress.GenderMF = 'M' "
+    Case vbUnchecked
+        BroOnlySQL = ""
+    End Select
+    
+    SuspendDateSQL = " AND tblTaskPersonSuspendDates.Person NOT IN (SELECT Person " & _
+                    "FROM tblTaskPersonSuspendDates " & _
+                    "WHERE TaskCategory = " & 4 & _
+                    " AND TaskSubCategory = " & 6 & _
+                    " AND Task = " & rstTMSSchedule!TaskNo & _
+                    " AND (SuspendStartDate <= #" & ActualTalkDate & "# AND SuspendEndDate >= #" & ActualTalkDate & "#)) "
+                    
+    If frmTMSInsertStudent.chkGroupFilter = vbChecked Then
+        BookGroupFilter = " AND GroupNo = " & CongregationMember.PersonsGroup(frmTMSInsertStudent.FormStudent)
+        
+        BookGroupFilter2 = "INNER JOIN tblBookGroupMembers ON " & _
+                           " (tblBookGroupMembers.PersonID = tblTMSWeightings.PersonID) "
+        BookGroupFilter3 = "INNER JOIN tblBookGroupMembers ON " & _
+                           " (tblBookGroupMembers.PersonID = tblNameAddress.ID) "
+    Else
+        BookGroupFilter = ""
+        BookGroupFilter2 = ""
+        BookGroupFilter3 = ""
+    End If
+    
+    Select Case frmTMSInsertStudent.optIntelligent.value
+    Case True
+    
+        '
+        'Prayer weighting is separate to other talk weighting. Otherwise
+        ' a brother that does prayers and talks would end up doing less talks
+        ' than brothers that don't do prayers....
+        '
+        If CurrentTalkNo <> "P" Then
+            OrderingSQL = "ORDER BY tblTMSWeightings.TMSWeighting"
+        Else
+            OrderingSQL = "ORDER BY tblTMSWeightings.TMSPrayerWeighting"
+        End If
+        
+        
+        If TheGridName = "flxInsertStudent" Then
+            '
+            'ie The InsertStudent grid is currently being populated
+            '
+            'Take account of suspend dates
+            '
+            Set rstStudentList = CMSDB.OpenRecordset("SELECT DISTINCT tblTaskPersonSuspendDates.Person, " & _
+                                                "tblTMSWeightings.TMSWeighting, " & _
+                                                "tblTMSWeightings.TMSPrayerWeighting " & _
+                                                "FROM ((tblTaskPersonSuspendDates " & _
+                                                "INNER JOIN tblTMSWeightings ON " & _
+                                                "tblTaskPersonSuspendDates.Person = tblTMSWeightings.PersonID) " & _
+                                                "INNER JOIN tblNameAddress ON " & _
+                                                " (tblNameAddress.ID = tblTMSWeightings.PersonID)) " & _
+                                                "WHERE TaskCategory = " & 4 & _
+                                                " AND TaskSubCategory = " & 6 & _
+                                                " AND Task = " & rstTMSSchedule!TaskNo & _
+                                                SuspendDateSQL & _
+                                                " AND tblTaskPersonSuspendDates.Person IN (SELECT Person " & _
+                                                                "FROM tblTaskPersonSuspendDates " & _
+                                                                "WHERE TaskCategory = " & 4 & _
+                                                                " AND TaskSubCategory = " & 6 & _
+                                                                " AND Task = " & SchoolNumForSQL & ") " & _
+                                                BroOnlySQL & OrderingSQL, dbOpenForwardOnly)
+                                                                                                
+        Else
+'            '
+'            'ie The InsertAssistant grid is currently being populated
+'            '
+
+'            '
+'            'Adjust wtgs so that list is ordered more logically for Assts.
+'            ' Do this by finding the Wtg of the person midway in tblTMSWeightings,
+'            ' then subtract this value from everybody's wtg. Ordering wtgs by new
+'            ' values will bring those that are 'between talks' to the top of the
+'            ' list.
+'            '
+'            Set rstAvWtg = CMSDB.OpenRecordset("SELECT TOP 50 PERCENT TMSWeighting " & _
+'                                                "FROM tblTMSWeightings " & _
+'                                                "ORDER BY TMSWeighting" _
+'                                               , dbOpenDynaset)
+'
+'            rstAvWtg.MoveLast
+'
+'            CMSDB.Execute "UPDATE tblTMSWeightings " & _
+'                          "SET TMSWeighting = Abs(TMSWeighting - " & rstAvWtg!TMSWeighting & ")"
+
+            '
+            'Take account of suspend dates
+            '
+            Set rstStudentList = CMSDB.OpenRecordset("SELECT DISTINCT tblTaskPersonSuspendDates.Person, " & _
+                                                "tblTMSWeightings.TMSWeighting " & _
+                                                "FROM (tblTaskPersonSuspendDates " & _
+                                                "INNER JOIN tblTMSWeightings ON " & _
+                                                " tblTaskPersonSuspendDates.Person = tblTMSWeightings.PersonID) " & _
+                                                BookGroupFilter2 & _
+                                                "WHERE TaskCategory = " & 4 & _
+                                                " AND TaskSubCategory = " & 6 & _
+                                                " AND Task IN (42,43)" & _
+                                                SuspendDateSQL & _
+                                                BookGroupFilter & _
+                                                " AND tblTaskPersonSuspendDates.Person IN (SELECT Person " & _
+                                                                "FROM tblTaskPersonSuspendDates " & _
+                                                                "WHERE TaskCategory = " & 4 & _
+                                                                " AND TaskSubCategory = " & 6 & _
+                                                                " AND Task = " & SchoolNumForSQL & ") " & _
+                                                "ORDER BY tblTMSWeightings.TMSWeighting", dbOpenForwardOnly)
+                                                                
+        End If
+        
+    Case False
+    
+        If TheGridName = "flxInsertStudent" Then
+            '
+            'ie The InsertStudent grid is currently being populated
+            '
+            'Take account of suspend dates
+            '
+            Set rstStudentList = CMSDB.OpenRecordset("SELECT DISTINCT tblTaskPersonSuspendDates.Person, tblNameAddress.FirstName, " & _
+                                                    "tblNameAddress.MiddleName, tblNameAddress.LastName " & _
+                                                "FROM tblTaskPersonSuspendDates " & _
+                                                "INNER JOIN tblNameAddress ON " & _
+                                                " (tblTaskPersonSuspendDates.Person = tblNameAddress.ID) " & _
+                                                "WHERE TaskCategory = " & 4 & _
+                                                " AND TaskSubCategory = " & 6 & _
+                                                " AND Task = " & rstTMSSchedule!TaskNo & _
+                                                SuspendDateSQL & _
+                                                " AND tblTaskPersonSuspendDates.Person IN (SELECT Person " & _
+                                                                "FROM tblTaskPersonSuspendDates " & _
+                                                                "WHERE TaskCategory = " & 4 & _
+                                                                " AND TaskSubCategory = " & 6 & _
+                                                                " AND Task = " & SchoolNumForSQL & ") " & _
+                                                BroOnlySQL & _
+                                                " ORDER BY LastName, FirstName, MiddleName", dbOpenForwardOnly)
+                                                                                                
+        Else
+            '
+            'ie The InsertAssistant grid is currently being populated
+            '
+            'Take account of suspend dates
+            '
+            Set rstStudentList = CMSDB.OpenRecordset("SELECT DISTINCT tblTaskPersonSuspendDates.Person, tblNameAddress.FirstName, " & _
+                                                    "tblNameAddress.MiddleName, tblNameAddress.LastName " & _
+                                                "FROM (tblTaskPersonSuspendDates " & _
+                                                "INNER JOIN tblNameAddress ON " & _
+                                                " tblTaskPersonSuspendDates.Person = tblNameAddress.ID) " & _
+                                                BookGroupFilter3 & _
+                                                "WHERE TaskCategory = " & 4 & _
+                                                " AND TaskSubCategory = " & 6 & _
+                                                " AND Task IN (42,43)" & _
+                                                SuspendDateSQL & _
+                                                BookGroupFilter & _
+                                                " AND tblTaskPersonSuspendDates.Person IN (SELECT Person " & _
+                                                                "FROM tblTaskPersonSuspendDates " & _
+                                                                "WHERE TaskCategory = " & 4 & _
+                                                                " AND TaskSubCategory = " & 6 & _
+                                                                " AND Task = " & SchoolNumForSQL & ") " & _
+                                                " ORDER BY LastName, FirstName, MiddleName", dbOpenForwardOnly)
+                                                                
+        End If
+    End Select
+    
+    
+    i = 2 'row of grid
+    j = 0 'position on array storing each student's prev/next dates
+    
+    '
+    'Fill grid with last/prev dates. Actual columns used is determined by the PrevXxxx
+    ' variables which are set in frmTMSInsertStudent.SetUpGrids according to the
+    ' talkno selected on frmTMSScheduling.
+    '
+    
+    TheGrid.Rows = 2
+    With rstStudentList
+    If Not .BOF Then
+        Do While Not .EOF
+            TheGrid.Rows = i + 1
+            
+            If CongregationMember.TMSStudentOnThisWeekFAST(!Person, CurrentAssignmentDate) Then
+                frmTMSInsertStudent.GridRowBackColourToGrey TheGrid, i, True, False
+            Else
+                frmTMSInsertStudent.GridRowBackColourToGrey TheGrid, i, False, False
+            End If
+                        
+            TheGrid.TextMatrix(i, 0) = CongregationMember.LastFirstNameMiddleName(!Person)
+            
+            TheGrid.TextMatrix(i, 25) = !Person 'NameID used for programmatic purposes.
+            
+            If frmTMSInsertStudent.chkShowNextPrevDates.value = vbChecked Then
+                If TheGridName = "flxInsertStudent" Then
+                
+                    ReDim Preserve NextPrevDates(j)
+                    NextPrevDates(j).ThePersonID = !Person
+                    
+                    '
+                    'Put next/prev dates into an array
+                    '
+                    NextPrevDates(j).NextPrevInfo(0) = CongregationMember.TMSPrevDateFAST(!Person, "P", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(1) = CongregationMember.TMSPrevDateFAST(!Person, "S", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(2) = CongregationMember.TMSPrevDateFAST(!Person, "1", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(3) = CongregationMember.TMSPrevDateFAST(!Person, "B", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(4) = CongregationMember.TMSPrevDateFAST(!Person, "2", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(5) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(6) = CongregationMember.TMSPrevDateFAST(!Person, "3", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(7) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(8) = CongregationMember.TMSPrevDateFAST(!Person, "4", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(9) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(10) = CongregationMember.TMSPrevDateFAST(!Person, "Asst", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(11) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(12) = CongregationMember.TMSNextDateFAST(!Person, "P", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(13) = CongregationMember.TMSNextDateFAST(!Person, "S", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(14) = CongregationMember.TMSNextDateFAST(!Person, "1", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(15) = CongregationMember.TMSNextDateFAST(!Person, "B", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(16) = CongregationMember.TMSNextDateFAST(!Person, "2", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(17) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(18) = CongregationMember.TMSNextDateFAST(!Person, "3", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(19) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(20) = CongregationMember.TMSNextDateFAST(!Person, "4", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(21) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(22) = CongregationMember.TMSNextDateFAST(!Person, "Asst", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(23) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    
+                Else
+                    '
+                    'This is Assistant-grid. Get prev/next dates from array.
+                    '
+                    'Locate current student in array to get their prev/next dates
+                    '
+                    For j = 0 To UBound(NextPrevDates)
+                        If NextPrevDates(j).ThePersonID = !Person Then
+                            Exit For
+                        End If
+                    Next j
+                    
+                End If
+                 
+                '
+                'Put array contents into student grid. If Student is not in array
+                ' (ie because they're only a householder, so wouldn't have been included
+                ' when processing Student Grid), then get dates from DB
+                '
+                If j <= UBound(NextPrevDates) Then
+                    With TheGrid
+                    .TextMatrix(i, PrevPrayer) = NextPrevDates(j).NextPrevInfo(0)
+                    .TextMatrix(i, PrevSQ) = NextPrevDates(j).NextPrevInfo(1)
+                    .TextMatrix(i, PrevNo1) = NextPrevDates(j).NextPrevInfo(2)
+                    .TextMatrix(i, PrevBH) = NextPrevDates(j).NextPrevInfo(3)
+                    .TextMatrix(i, PrevNo2) = NextPrevDates(j).NextPrevInfo(4)
+                    .TextMatrix(i, PrevNo2School) = NextPrevDates(j).NextPrevInfo(5)
+                    .TextMatrix(i, PrevNo3) = NextPrevDates(j).NextPrevInfo(6)
+                    .TextMatrix(i, PrevNo3School) = NextPrevDates(j).NextPrevInfo(7)
+                    .TextMatrix(i, PrevNo4) = NextPrevDates(j).NextPrevInfo(8)
+                    .TextMatrix(i, PrevNo4School) = NextPrevDates(j).NextPrevInfo(9)
+                    .TextMatrix(i, PrevAsst) = NextPrevDates(j).NextPrevInfo(10)
+                    .TextMatrix(i, PrevAsstSchool) = NextPrevDates(j).NextPrevInfo(11)
+                    .TextMatrix(i, NextPrayer) = NextPrevDates(j).NextPrevInfo(12)
+                    .TextMatrix(i, NextSQ) = NextPrevDates(j).NextPrevInfo(13)
+                    .TextMatrix(i, NextNo1) = NextPrevDates(j).NextPrevInfo(14)
+                    .TextMatrix(i, NextBH) = NextPrevDates(j).NextPrevInfo(15)
+                    .TextMatrix(i, NextNo2) = NextPrevDates(j).NextPrevInfo(16)
+                    .TextMatrix(i, NextNo2School) = NextPrevDates(j).NextPrevInfo(17)
+                    .TextMatrix(i, NextNo3) = NextPrevDates(j).NextPrevInfo(18)
+                    .TextMatrix(i, NextNo3School) = NextPrevDates(j).NextPrevInfo(19)
+                    .TextMatrix(i, NextNo4) = NextPrevDates(j).NextPrevInfo(20)
+                    .TextMatrix(i, NextNo4School) = NextPrevDates(j).NextPrevInfo(21)
+                    .TextMatrix(i, NextAsst) = NextPrevDates(j).NextPrevInfo(22)
+                    .TextMatrix(i, NextAsstSchool) = NextPrevDates(j).NextPrevInfo(23)
+                    End With
+                Else
+                    '
+                    'Go to   s l o w   DB. Add new student to array, and get the dates....
+                    '
+                    ReDim Preserve NextPrevDates(j)
+                    NextPrevDates(j).ThePersonID = !Person
+                    
+                    NextPrevDates(j).NextPrevInfo(0) = CongregationMember.TMSPrevDateFAST(!Person, "P", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(1) = CongregationMember.TMSPrevDateFAST(!Person, "S", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(2) = CongregationMember.TMSPrevDateFAST(!Person, "1", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(3) = CongregationMember.TMSPrevDateFAST(!Person, "B", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(4) = CongregationMember.TMSPrevDateFAST(!Person, "2", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(5) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(6) = CongregationMember.TMSPrevDateFAST(!Person, "3", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(7) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(8) = CongregationMember.TMSPrevDateFAST(!Person, "4", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(9) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(10) = CongregationMember.TMSPrevDateFAST(!Person, "Asst", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(11) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(12) = CongregationMember.TMSNextDateFAST(!Person, "P", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(13) = CongregationMember.TMSNextDateFAST(!Person, "S", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(14) = CongregationMember.TMSNextDateFAST(!Person, "1", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(15) = CongregationMember.TMSNextDateFAST(!Person, "B", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(16) = CongregationMember.TMSNextDateFAST(!Person, "2", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(17) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(18) = CongregationMember.TMSNextDateFAST(!Person, "3", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(19) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(20) = CongregationMember.TMSNextDateFAST(!Person, "4", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(21) = CongregationMember.GetTMSSchoolNoForInsertForm
+                    NextPrevDates(j).NextPrevInfo(22) = CongregationMember.TMSNextDateFAST(!Person, "Asst", CurrentAssignmentDate)
+                    NextPrevDates(j).NextPrevInfo(23) = CongregationMember.GetTMSSchoolNoForInsertForm
+                                        
+                    With TheGrid
+                    .TextMatrix(i, PrevPrayer) = NextPrevDates(j).NextPrevInfo(0)
+                    .TextMatrix(i, PrevSQ) = NextPrevDates(j).NextPrevInfo(1)
+                    .TextMatrix(i, PrevNo1) = NextPrevDates(j).NextPrevInfo(2)
+                    .TextMatrix(i, PrevBH) = NextPrevDates(j).NextPrevInfo(3)
+                    .TextMatrix(i, PrevNo2) = NextPrevDates(j).NextPrevInfo(4)
+                    .TextMatrix(i, PrevNo2School) = NextPrevDates(j).NextPrevInfo(5)
+                    .TextMatrix(i, PrevNo3) = NextPrevDates(j).NextPrevInfo(6)
+                    .TextMatrix(i, PrevNo3School) = NextPrevDates(j).NextPrevInfo(7)
+                    .TextMatrix(i, PrevNo4) = NextPrevDates(j).NextPrevInfo(8)
+                    .TextMatrix(i, PrevNo4School) = NextPrevDates(j).NextPrevInfo(9)
+                    .TextMatrix(i, PrevAsst) = NextPrevDates(j).NextPrevInfo(10)
+                    .TextMatrix(i, PrevAsstSchool) = NextPrevDates(j).NextPrevInfo(11)
+                    .TextMatrix(i, NextPrayer) = NextPrevDates(j).NextPrevInfo(12)
+                    .TextMatrix(i, NextSQ) = NextPrevDates(j).NextPrevInfo(13)
+                    .TextMatrix(i, NextNo1) = NextPrevDates(j).NextPrevInfo(14)
+                    .TextMatrix(i, NextBH) = NextPrevDates(j).NextPrevInfo(15)
+                    .TextMatrix(i, NextNo2) = NextPrevDates(j).NextPrevInfo(16)
+                    .TextMatrix(i, NextNo2School) = NextPrevDates(j).NextPrevInfo(17)
+                    .TextMatrix(i, NextNo3) = NextPrevDates(j).NextPrevInfo(18)
+                    .TextMatrix(i, NextNo3School) = NextPrevDates(j).NextPrevInfo(19)
+                    .TextMatrix(i, NextNo4) = NextPrevDates(j).NextPrevInfo(20)
+                    .TextMatrix(i, NextNo4School) = NextPrevDates(j).NextPrevInfo(21)
+                    .TextMatrix(i, NextAsst) = NextPrevDates(j).NextPrevInfo(22)
+                    .TextMatrix(i, NextAsstSchool) = NextPrevDates(j).NextPrevInfo(23)
+                    End With
+                                        
+                End If
+                    
+                 
+                 '
+                 'Now highlight in green the most recent
+                 ' next & previous talks given by each student. This aids user in
+                 ' spreading talks more evenly.
+                 '
+                 With TheGrid
+                 '
+                 'Put pertinent PrevDates into an array
+                 ' (Must change format since can only use variants in Array function)
+                 '
+                 PrevDates = Array(Format(NextPrevDates(j).NextPrevInfo(1), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(2), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(3), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(4), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(6), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(8), "yyyy/mm/dd"))
+                 
+                 '
+                 'Sort desc
+                 '
+                 BubbleSort PrevDates, , True
+                 
+                 .Row = i
+                 
+                If PrevDates(0) <> "" Then
+                    Select Case Format(PrevDates(0), "dd/mm/yy")
+                    Case NextPrevDates(j).NextPrevInfo(1)
+                       .col = PrevSQ
+                       .CellBackColor = PrevTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(2)
+                       .col = PrevNo1
+                       .CellBackColor = PrevTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(3)
+                       .col = PrevBH
+                       .CellBackColor = PrevTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(4)
+                       .col = PrevNo2
+                       .CellBackColor = PrevTalkColour
+                       .col = PrevNo2School
+                       .CellBackColor = PrevTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(6)
+                       .col = PrevNo3
+                       .CellBackColor = PrevTalkColour
+                       .col = PrevNo3School
+                       .CellBackColor = PrevTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(8)
+                       .col = PrevNo4
+                       .CellBackColor = PrevTalkColour
+                       .col = PrevNo4School
+                       .CellBackColor = PrevTalkColour
+                    End Select
+                End If
+                
+                 '
+                 'Put pertinent NextDates into an array
+                 ' (Must change format since can only use variants in Array function)
+                 '
+                 NextDates = Array(Format(NextPrevDates(j).NextPrevInfo(13), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(14), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(15), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(16), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(18), "yyyy/mm/dd"), _
+                                Format(NextPrevDates(j).NextPrevInfo(20), "yyyy/mm/dd"))
+                 
+                 '
+                 'Sort asc
+                 '
+                 BubbleSort NextDates, , False
+                 
+                 '
+                 'Find the minimum non-blank date
+                 '
+                For n = 0 To 5
+                    If NextDates(n) <> "" Then
+                        Exit For
+                    End If
+                Next n
+                 
+                If n > 5 Then
+                    n = 5
+                End If
+                 
+                 .Row = i
+                 
+                If NextDates(n) <> "" Then
+                    Select Case Format(NextDates(n), "dd/mm/yy")
+                    Case NextPrevDates(j).NextPrevInfo(13)
+                       .col = NextSQ
+                       .CellBackColor = NextTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(14)
+                       .col = NextNo1
+                       .CellBackColor = NextTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(15)
+                       .col = NextBH
+                       .CellBackColor = NextTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(16)
+                       .col = NextNo2
+                       .CellBackColor = NextTalkColour
+                       .col = NextNo2School
+                       .CellBackColor = NextTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(18)
+                       .col = NextNo3
+                       .CellBackColor = NextTalkColour
+                       .col = NextNo3School
+                       .CellBackColor = NextTalkColour
+                    Case NextPrevDates(j).NextPrevInfo(20)
+                       .col = NextNo4
+                       .CellBackColor = NextTalkColour
+                       .col = NextNo4School
+                       .CellBackColor = NextTalkColour
+                    End Select
+                End If
+                End With
+                
+            End If
+                                        
+            i = i + 1
+            
+            If TheGridName = "flxInsertStudent" Then
+                j = j + 1
+            End If
+            
+            .MoveNext
+        Loop
+    End If
+    
+    End With
+    
+    Screen.MousePointer = vbNormal
+    
+    
+    Exit Sub
+ErrorTrap:
+    EndProgram
+    
+End Sub
+
+
+Public Function SeekTheFile(TheFileName As String, TheDialogTitle As String, FileOpenDialog As CommonDialog) As Boolean
+Dim SaveCurDir As String
+
+    On Error GoTo ExitNow
+
+    SeekTheFile = False
+    
+    '
+    'Set up dialogue parms
+    '
+    FileOpenDialog.Filter = "All files (*.*)|*.*|Text files|*.txt"
+    FileOpenDialog.FilterIndex = 2
+    FileOpenDialog.DefaultExt = "txt"
+    FileOpenDialog.Flags = cdlOFNHideReadOnly Or cdlOFNFileMustExist Or _
+        cdlOFNNoReadOnlyReturn Or cdlOFNNoChangeDir
+    FileOpenDialog.DialogTitle = TheDialogTitle
+    'FileOpenDialog.InitDir = CurDir$
+'    FileOpenDialog.FileName = FileName
+    
+    FileOpenDialog.CancelError = True ' Exit if user presses Cancel.
+    
+    FileOpenDialog.ShowOpen
+    TheFileName = FileOpenDialog.Filename
+    SeekTheFile = True
+
+ExitNow:
+
+End Function
+Public Sub RefreshGrid()
+Dim SchoolNum As Long, StoreRow As Long
+    On Error GoTo ErrorTrap
+    
+    '
+    'Refresh the grid on frmTMSScheduling
+    '
+    
+    Screen.MousePointer = vbHourglass
+    
+    With frmTMSScheduling
+    
+    !flxTMSSchedule.Redraw = False
+    '
+    'StoreRow used to maintain row selection following refresh
+    '
+    If !flxTMSSchedule.Row > 0 Then
+        StoreRow = !flxTMSSchedule.Row
+    Else
+        StoreRow = 0
+    End If
+    
+    If !cmbYear.ListIndex > -1 And !cmbMonth.ListIndex > -1 Then
+
+        Select Case True
+        Case !opt1stSchool:
+            SchoolNum = 1
+        Case !opt2ndSchool:
+            SchoolNum = 2
+        Case !opt3rdSchool:
+            SchoolNum = 3
+        End Select
+
+        '
+        'Acquire 2 recsets - one for the items, the other for the students assigned to items.
+        '
+        GetTMSScheduleRecordset !cmbYear.ItemData(!cmbYear.ListIndex), !cmbMonth.ItemData(!cmbMonth.ListIndex), SchoolNum, rstTMSSchedule, rstTMSStudents
+        FillTMSScheduleGrid
+        
+        '
+        'StoreRow used to maintain row selection following refresh
+        '
+        If StoreRow > 0 Then
+            !flxTMSSchedule.Row = StoreRow
+            '
+            'Make selected row red again since FillTMSScheduleGrid rebuilds grid as black
+            '
+            .SortRowColour
+        End If
+        
+    Else
+        !flxTMSSchedule.Rows = 1
+    End If
+        
+    !lblSourceDisplay = ""
+    !lblThemeDisplay = ""
+    !lblBroOnly = ""
+    !lblSetting = ""
+    !lblCounsel = ""
+    
+    .GridToBlack
+    
+    !flxTMSSchedule.Redraw = True
+    
+    End With
+    
+
+    Screen.MousePointer = vbNormal
+    
+    Exit Sub
+    
+ErrorTrap:
+    EndProgram
+
+End Sub
+
+
+Public Function BuildTMSWeightingsTable() As Boolean
+Dim TheError As Integer, rstAllTMSMembers As Recordset
+
+On Error GoTo ErrorTrap
+    
+    DeleteTable "tblTMSWeightings"
+    CreateTable TheError, "tblTMSWeightings", "PersonID", "LONG"
+    CreateField TheError, "tblTMSWeightings", "TMSWeighting", "DOUBLE"
+    CreateField TheError, "tblTMSWeightings", "TMSPrayerWeighting", "DOUBLE"
+    
+    Set rstAllTMSMembers = CMSDB.OpenRecordset("SELECT DISTINCT Person " & _
+                                        "FROM tblTaskPersonSuspendDates " & _
+                                        "WHERE TaskCategory = " & 4 & _
+                                        " AND TaskSubCategory = " & 6, dbOpenDynaset)
+    
+    With rstAllTMSMembers
+    
+    If Not .BOF Then
+        BuildTMSWeightingsTable = True
+        Do Until .EOF
+            CMSDB.Execute "INSERT INTO tblTMSWeightings " & _
+                              "(PersonID, TMSWeighting, TMSPrayerWeighting) " & _
+                              "VALUES (" & !Person & ", " & 0 & ", " & 0 & ")"
+                              
+            .MoveNext
+        Loop
+    Else
+        BuildTMSWeightingsTable = False
+        Exit Function
+    End If
+    
+    End With
+    
+    Exit Function
+ErrorTrap:
+    EndProgram
+
+End Function
+
+Public Sub CalculateTMSWeightings()
+On Error GoTo ErrorTrap
+Dim weekno As Long, i As Long, rstTMSWeightings As Recordset
+Dim TempDate As Date, SQLStr As String, rstTMSStudentsOnSchedule As Recordset, PrevDate As Date
+Dim TheWeighting As Double, TheAsstWeighting As Double, ProcessDate As Date
+
+    Screen.MousePointer = vbHourglass
+    
+    CMSDB.Execute "UPDATE tblTMSWeightings " & _
+                    "SET TMSWeighting = 0, " & _
+                        "TMSPrayerWeighting = 0 "
+    
+    SQLStr = "SELECT tblTMSSchedule.AssignmentDate, " & _
+            "tblTMSSchedule.TalkNo, " & _
+            "tblTMSSchedule.PersonID, " & _
+            "tblTMSSchedule.Assistant1ID, " & _
+            "tblTMSSchedule.SchoolNo, " & _
+            "tblTMSSchedule.ScheduleSeqNum " & _
+            "FROM tblTMSSchedule " & _
+            "WHERE TalkDefaulted = FALSE " & _
+            "ORDER BY 1"
+
+            
+
+    Set rstTMSStudentsOnSchedule = CMSDB.OpenRecordset(SQLStr, dbOpenDynaset)
+    
+    
+    weekno = WeeksToCheck
+    
+    Set rstTMSWeightings = CMSDB.OpenRecordset("SELECT PersonID, TMSWeighting, TMSPrayerWeighting " & _
+                                        "FROM tblTMSWeightings ", dbOpenDynaset)
+        
+    TempDate = CDate(Format(frmTMSScheduling!flxTMSSchedule.TextMatrix(frmTMSScheduling!flxTMSSchedule.Row, 0), "dd/mm/yyyy"))
+    
+    PrevDate = TempDate
+    
+    With rstTMSStudentsOnSchedule
+    '
+    'Work back from current date, updating each student's weighting
+    '
+    .FindLast "AssignmentDate <= #" & Format(TempDate, "mm/dd/yyyy") & "#"
+    
+    
+    If Not .NoMatch Then
+        ProcessDate = CDate(Format(!AssignmentDate, "dd/mm/yyyy"))
+        TheWeighting = GetTMSWeighting(Abs(DateDiff("ww", ProcessDate, TempDate)), !TalkNo)
+        TheAsstWeighting = GetTMSWeighting(Abs(DateDiff("ww", ProcessDate, TempDate)), "Asst")
+        Do While Abs(weekno) >= 0
+            rstTMSWeightings.FindFirst "PersonID = " & !PersonID
+            If Not rstTMSWeightings.NoMatch Then
+                rstTMSWeightings.Edit
+                If !TalkNo <> "P" Then
+                    rstTMSWeightings!TMSWeighting = rstTMSWeightings!TMSWeighting + TheWeighting
+                Else
+                    rstTMSWeightings!TMSPrayerWeighting = rstTMSWeightings!TMSPrayerWeighting + TheWeighting
+                End If
+                rstTMSWeightings.Update
+                
+            End If
+            
+            rstTMSWeightings.FindFirst "PersonID = " & !Assistant1ID
+            If Not rstTMSWeightings.NoMatch Then
+                rstTMSWeightings.Edit
+                rstTMSWeightings!TMSWeighting = rstTMSWeightings!TMSWeighting + _
+                                                TheAsstWeighting * IIf(CongregationMember.DoesNOTdoTMS_Nos_2_3_4(!Assistant1ID), TMSWeightingIfAssistantOnly, 1)
+                rstTMSWeightings.Update
+            End If
+            
+            
+            .MovePrevious
+            If .BOF Then
+                Exit Do
+            End If
+            
+            If PrevDate <> !AssignmentDate Then
+                weekno = weekno - 1
+                ProcessDate = CDate(Format(!AssignmentDate, "dd/mm/yyyy"))
+            End If
+            
+            TheWeighting = GetTMSWeighting(Abs(DateDiff("ww", ProcessDate, TempDate)), !TalkNo)
+            TheAsstWeighting = GetTMSWeighting(Abs(DateDiff("ww", ProcessDate, TempDate)), "Asst")
+            
+            PrevDate = !AssignmentDate
+        Loop
+    End If
+    
+    '
+    'Work forward from current date, updating each student's weighting
+    '
+    .FindFirst "AssignmentDate >= #" & Format(TempDate, "mm/dd/yyyy") & "#"
+    PrevDate = TempDate
+
+    weekno = 0
+    
+    If Not .NoMatch Then
+        TheWeighting = GetTMSWeighting(Abs(DateDiff("ww", CDate(!AssignmentDate), TempDate)), !TalkNo)
+        TheAsstWeighting = GetTMSWeighting(Abs(DateDiff("ww", CDate(!AssignmentDate), TempDate)), "Asst")
+        Do While Abs(weekno) <= WeeksToCheck
+            rstTMSWeightings.FindFirst "PersonID = " & !PersonID
+            If Not rstTMSWeightings.NoMatch Then
+                rstTMSWeightings.Edit
+                If !TalkNo <> "P" Then
+                    rstTMSWeightings!TMSWeighting = rstTMSWeightings!TMSWeighting + TheWeighting
+                Else
+                    rstTMSWeightings!TMSPrayerWeighting = rstTMSWeightings!TMSPrayerWeighting + TheWeighting
+                End If
+                rstTMSWeightings.Update
+            End If
+            
+            rstTMSWeightings.FindFirst "PersonID = " & !Assistant1ID
+            If Not rstTMSWeightings.NoMatch Then
+                rstTMSWeightings.Edit
+                rstTMSWeightings!TMSWeighting = rstTMSWeightings!TMSWeighting + _
+                                                TheAsstWeighting * IIf(CongregationMember.DoesNOTdoTMS_Nos_2_3_4(!Assistant1ID), TMSWeightingIfAssistantOnly, 1)
+                rstTMSWeightings.Update
+            End If
+            
+            
+            .MoveNext
+            If .EOF Then
+                Exit Do
+            End If
+    
+            
+            If PrevDate <> !AssignmentDate Then
+                weekno = weekno + 1
+                ProcessDate = CDate(Format(!AssignmentDate, "dd/mm/yyyy"))
+            End If
+            
+            TheWeighting = GetTMSWeighting(Abs(DateDiff("ww", ProcessDate, TempDate)), !TalkNo)
+            TheAsstWeighting = GetTMSWeighting(Abs(DateDiff("ww", ProcessDate, TempDate)), "Asst")
+            
+            PrevDate = !AssignmentDate
+        Loop
+    End If
+    
+    End With
+    
+    '
+    'Now scale down the weightings of all brothers that do No4 talks so that they
+    ' compare more favourably with sister's weightings. Otherwise, brothers
+    ' won't get a look in!
+    '
+    With frmTMSScheduling!flxTMSSchedule
+    If .TextMatrix(.Row, 1) = "4" Then
+        CMSDB.Execute "UPDATE tblTMSWeightings " & _
+                      "SET TMSWeighting = (TMSWeighting * " & TMSScaleNo4BroWeightings & ")" & _
+                      "WHERE PersonID IN " & _
+                      " (SELECT Person " & _
+                      "  FROM tblTaskAndPerson " & _
+                      "  INNER JOIN tblNameAddress " & _
+                      "  ON tblTaskAndPerson.Person = tblNameAddress.ID " & _
+                      "  WHERE GenderMF = 'M' " & _
+                      "  AND TaskCategory = 4 " & _
+                      "  AND TaskSubCategory = 6 " & _
+                      "  AND Task IN (40, 41))"
+    End If
+    End With
+    
+    Screen.MousePointer = vbNormal
+    
+    Exit Sub
+ErrorTrap:
+    EndProgram
+
+End Sub
+
+Private Function GetTMSWeighting(WeekBeingProcessed As Long, TalkNo As String) As Double
+On Error GoTo ErrorTrap
+
+    GetTMSWeighting = 1000000 * Exp(-1 * Abs(WeekBeingProcessed))
+     
+    '
+    'Weighting coeffs are acquired from GlobalParms object when frmTMSScheduling loads
+    '
+    
+    If WeekBeingProcessed = 0 Then
+        GetTMSWeighting = 1000 * GetTMSWeighting
+    Else
+        Select Case TalkNo
+        Case "P"
+            GetTMSWeighting = TMSPrayerWeighting * GetTMSWeighting
+        Case "S"
+            GetTMSWeighting = TMSSQWeighting * GetTMSWeighting
+        Case "1"
+            GetTMSWeighting = TMSNo1Weighting * GetTMSWeighting
+        Case "B"
+            GetTMSWeighting = TMSBHWeighting * GetTMSWeighting
+        Case "2"
+            GetTMSWeighting = TMSNo2Weighting * GetTMSWeighting
+        Case "3"
+            GetTMSWeighting = TMSNo3Weighting * GetTMSWeighting
+        Case "4"
+            GetTMSWeighting = TMSNo4Weighting * GetTMSWeighting
+        Case "Asst"
+            GetTMSWeighting = TMSAsstWeighting * GetTMSWeighting
+        End Select
+    End If
+    
+
+
+    Exit Function
+ErrorTrap:
+    EndProgram
+End Function
+
+Public Function GetTMSCounselHistoryRecordset(TheStudentID As Long) As Recordset
+Dim SQLStr As String
+'
+'
+
+On Error GoTo ErrorTrap
+
+    SQLStr = "SELECT AssignmentDate, " & _
+            "TalkNo, " & _
+            "CounselPoint, " & _
+            "CounselPointAssignedDate, " & _
+            "CounselPointCompletedDate, " & _
+            "Comment, " & _
+            "ScheduleSeqNum, " & _
+            "SchoolNo, " & _
+            "Setting, " & _
+            "PersonID, " & _
+            "Assistant1ID, " & _
+            "TalkCompleted, " & _
+            "TalkDefaulted, " & _
+            "ExerciseComplete, " & _
+            "DiscussedWithStudent " & _
+            "FROM tblTMSSchedule " & _
+            "WHERE PersonId = " & TheStudentID & _
+            " AND  TalkNo NOT IN ('P') " & _
+            " ORDER BY AssignmentDate DESC"
+    
+    Set GetTMSCounselHistoryRecordset = CMSDB.OpenRecordset(SQLStr, dbOpenDynaset)
+
+    Exit Function
+ErrorTrap:
+    EndProgram
+    
+End Function
+
+
+Public Sub FillTheTMSCounselHistoryGrid(CounselHistory As Recordset)
+Dim i As Byte, j As Integer
+
+On Error GoTo ErrorTrap
+
+'
+'Populate grid from recordset
+'
+     'clear grid's non-fixed rows
+    frmTMSCounselPoints!flxCounselHistory.Rows = 1
+    
+    With CounselHistory
+        
+    If Not .BOF Then
+        .MoveFirst
+        j = 1
+        Do Until .EOF
+            frmTMSCounselPoints!flxCounselHistory.Rows = j + 1
+            frmTMSCounselPoints!flxCounselHistory.TextMatrix(j, 0) = !AssignmentDate
+            frmTMSCounselPoints!flxCounselHistory.TextMatrix(j, 1) = !TalkNo
+            If !CounselPoint > 0 Then
+                Select Case !TalkNo
+                Case "1", "B"
+                    If CongregationMember.TMS_AllowCounselOnNo1AndBH(!PersonID) Then
+                        frmTMSCounselPoints!flxCounselHistory.TextMatrix(j, 2) = !CounselPoint
+                    Else
+                        frmTMSCounselPoints!flxCounselHistory.TextMatrix(j, 2) = ""
+                    End If
+                Case Else
+                    frmTMSCounselPoints!flxCounselHistory.TextMatrix(j, 2) = !CounselPoint
+                End Select
+            Else
+                frmTMSCounselPoints!flxCounselHistory.TextMatrix(j, 2) = ""
+            End If
+            
+            frmTMSCounselPoints!flxCounselHistory.TextMatrix(j, 3) = j - 1
+            j = j + 1
+            .MoveNext
+        Loop
+    End If
+        
+    End With
+    
+'    With frmTMSCounselPoints!flxCounselHistory
+'    For j = 0 To .Rows - 1
+'        .Row = j
+'        For i = 0 To .Cols - 1
+'            .Col = i
+'            .CellForeColor = QBColor(0) 'set all cells to black text
+'        Next i
+'    Next j
+'
+'    If .Rows > 1 Then 'ie more than just the 2 fixed rows
+'        .Row = 1
+'        .Col = 0
+'        frmTMSItems.PreviousRow = .Row  'ready for click event when we mess about with row colours
+'    End If
+'    End With
+
+
+    Exit Sub
+ErrorTrap:
+    EndProgram
+    
+End Sub
+
+
+Public Sub LoadCMSFileToDB(ScheduleFilePath As String, FileType As Long)
+Dim FreeFileNum As Integer, TheScheduleFileRecord As String, TheRecordCount As Long
+Dim InputRecCollection As New Collection, i As Long, AString As String, TheDate As Date
+Dim FileIsOpen As Boolean
+
+On Error GoTo ErrorTrap
+
+    FreeFileNum = FreeFile() 'Get next available file number
+    
+    TheTMSItemFilePath = ScheduleFilePath
+    
+    On Error Resume Next
+    
+    Open ScheduleFilePath For Input As #FreeFileNum
+    
+    If Err.number <> 0 Then
+        MsgBox "Could not open " & ScheduleFilePath & ".", vbOKOnly + vbCritical, AppName
+        End
+    End If
+    
+    FileIsOpen = True
+    On Error GoTo ErrorTrap
+    
+'    Line Input #FreeFileNum, TheScheduleFileRecord
+    TheRecordCount = 1
+    
+    For i = 1 To InputRecCollection.Count
+        InputRecCollection.Remove i
+    Next i
+    
+    TheDate = CDate(frmTMSLoadItems!txtFirstDate)
+    
+    mbBroOnlyTalkFound = False 'init
+    
+    '
+    'Read through CMS Schedule file
+    '
+    Do While (Not EOF(FreeFileNum))
+        Line Input #FreeFileNum, TheScheduleFileRecord
+        '
+        'Add the new record to collection for later display if necessary
+        '
+        InputRecCollection.Add TheScheduleFileRecord
+        
+        Select Case FileType
+        Case 1 'tab delimited
+            If ProcessTabDelimitedRow(TheScheduleFileRecord, TheDate) Then
+                TheRecordCount = TheRecordCount + 1
+            Else
+                Screen.MousePointer = vbNormal
+                MsgBox "Error on line " & TheRecordCount & " of " & ScheduleFilePath & _
+                        vbCrLf & "Please correct and try again. The following dialogue will show the erroneous data.", vbOKOnly + vbExclamation, AppName
+                For i = 1 To InputRecCollection.Count
+                    AString = AString & InputRecCollection.Item(i) & vbNewLine
+                Next i
+                TMSWeeksItems = AString
+                frmTMSShowErroneousItems.Show vbModal
+                Exit Sub
+            End If
+        Case 2 'normal format
+            If CheckRecordTypeAndActAccordingly(TheScheduleFileRecord, TheDate) Then
+                TheRecordCount = TheRecordCount + 1
+            Else
+                Screen.MousePointer = vbNormal
+                MsgBox "Error on line " & TheRecordCount & " of " & ScheduleFilePath & _
+                        vbCrLf & "Please correct and try again. The following dialogue will show the erroneous data.", vbOKOnly + vbExclamation, AppName
+                For i = 1 To InputRecCollection.Count
+                    AString = AString & InputRecCollection.Item(i) & vbNewLine
+                Next i
+                TMSWeeksItems = AString
+                frmTMSShowErroneousItems.Show vbModal
+                Exit Sub
+            End If
+        End Select
+    Loop
+        
+    Close FreeFileNum
+    
+    MsgBox "Items successfully loaded. " & vbCrLf & vbCrLf & _
+            IIf(mbBroOnlyTalkFound, "", "No #4 assignments marked as 'Brother Only' " & _
+                "were found. You may need to mark these as such manually."), vbOKOnly + vbInformation, AppName
+
+    Exit Sub
+    
+ErrorTrap:
+    
+    If FileIsOpen Then
+        Close #FreeFileNum
+    End If
+    
+    EndProgram
+    
+
+End Sub
+
+Private Function CheckRecordTypeAndActAccordingly(InputRecord As String, CurrentAssignmentDate As Date) As Boolean
+On Error GoTo ErrorTrap
+
+Static OneWeeksTMSSchedule As TMSScheduleRecord
+Dim TMSScheduleDay As Long, DateRecDetails() As String, TMSScheduleMonth As Long
+Dim i As Long
+Static DateRecFound As Boolean
+Static SQRecFound As Boolean
+Static No1RecFound As Boolean
+Static No2RecFound As Boolean
+Static No3RecFound As Boolean
+Static No4RecFound As Boolean
+Static OralReviewRecFound As Boolean
+
+    DoEvents
+    '
+    'Get rid of tabs and extraneous spaces. Double-up the quotes.
+    '
+    InputRecord = Trim(Replace(InputRecord, vbTab, " "))
+    InputRecord = RemoveExtraSpacesToLeaveSingleSpacedWords(InputRecord)
+    InputRecord = DoubleUpSingleQuotes(InputRecord)
+    
+    CheckRecordTypeAndActAccordingly = True
+    
+    With OneWeeksTMSSchedule
+    
+    Select Case True
+    Case IsDateRecord(InputRecord)
+        '
+        'Split out each word to an element of the array
+        '
+        DateRecDetails() = Split(InputRecord)
+        If UBound(DateRecDetails) >= 7 Then 'at least 7 words - maybe more for Bible books
+                                            ' such as "Song of Solomon 1-3"
+            '
+            'Construct the date
+            '
+            TMSScheduleMonth = GetMonthNumber(Left(DateRecDetails(0), 3))
+            TMSScheduleDay = CLng(DateRecDetails(1))
+            .TMSUDT_AssignmentDate = CDate(DateSerial(CInt(Right(frmTMSLoadItems.txtFirstDate, 4)), _
+                                        CInt(TMSScheduleMonth), CInt(TMSScheduleDay)))
+            
+            '
+            'Build the BH Source - depends how long it is. Relies on fact that last two
+            ' words on the record are "Song nnn"
+            '
+            For i = 4 To UBound(DateRecDetails) - 2
+                .TMSUDT_BHSource = .TMSUDT_BHSource & DateRecDetails(i) & " "
+            Next i
+            
+            .TMSUDT_BHSource = Trim(.TMSUDT_BHSource)
+            
+            '
+            'Ensure that the song is final part of the line
+            '
+            If DateRecDetails(UBound(DateRecDetails) - 1) = "Song" Then
+                .TMSUDT_SongNo = DateRecDetails(UBound(DateRecDetails))
+            Else
+                CheckRecordTypeAndActAccordingly = False
+                Exit Function
+            End If
+                                        
+            '
+            'Compare file's date with that maintained internally
+            '
+            If .TMSUDT_AssignmentDate <> CurrentAssignmentDate Then
+                CheckRecordTypeAndActAccordingly = False
+                Exit Function
+            End If
+            
+            DateRecFound = True
+        Else
+            CheckRecordTypeAndActAccordingly = False
+            Exit Function
+        End If
+    Case Left(InputRecord, 14) = "Speech Quality"
+        .TMSUDT_SQSource = AcquireTheSourceMaterial(InputRecord, "(", ")")
+        .TMSUDT_SQTheme = AcquireTheTheme(InputRecord, "Speech Quality", "(")
+        SQRecFound = True
+    Case Left(InputRecord, 11) = "Oral Review"
+        .TMSUDT_OralReview = "Oral Review"
+        OralReviewRecFound = True
+        If AllRecsComplete(DateRecFound, _
+                            SQRecFound, _
+                            No1RecFound, _
+                            No2RecFound, _
+                            No3RecFound, _
+                            No4RecFound, _
+                            OralReviewRecFound) Then
+            CheckRecordTypeAndActAccordingly = True
+            UpdateDB OneWeeksTMSSchedule, OralReviewRecFound
+            '
+            'Initialise structure for next logical group...
+            '
+            OneWeeksTMSSchedule = InitSchedRec(0, "", 0, "", "", "", "", "", "", "", "", "", "", False, "")
+            
+            DateRecFound = False
+            SQRecFound = False
+            No1RecFound = False
+            No2RecFound = False
+            No3RecFound = False
+            No4RecFound = False
+            OralReviewRecFound = False
+            
+            CurrentAssignmentDate = CurrentAssignmentDate + 7
+        Else
+            CheckRecordTypeAndActAccordingly = False
+        End If
+    Case Left(InputRecord, 5) = "No. 1"
+        .TMSUDT_No1Source = AcquireTheSourceMaterial(InputRecord, "(", ")")
+        .TMSUDT_No1Theme = AcquireTheTheme(InputRecord, "No. 1", "(")
+        No1RecFound = True
+    Case Left(InputRecord, 5) = "No. 2"
+        .TMSUDT_No2Source = AcquireTheSourceMaterial(InputRecord, "No. 2", "")
+        .TMSUDT_No2Theme = "Reading Assignment"
+        No2RecFound = True
+    Case Left(InputRecord, 5) = "No. 3"
+        .TMSUDT_No3Source = AcquireTheSourceMaterial(InputRecord, "(", ")")
+        .TMSUDT_No3Theme = AcquireTheTheme(InputRecord, "No. 3", "(")
+         No3RecFound = True
+    Case Left(InputRecord, 5) = "No. 4"
+        .TMSUDT_No4Source = AcquireTheSourceMaterial(InputRecord, "(", ")")
+        .TMSUDT_No4Theme = AcquireTheTheme(InputRecord, "No. 4", "(")
+        
+        If Left(.TMSUDT_No4Theme, 1) = "*" Then
+            .TMSUDT_BroOnlyForNo4 = True
+            mbBroOnlyTalkFound = True
+        Else
+            .TMSUDT_BroOnlyForNo4 = False
+        End If
+        
+        No4RecFound = True
+        If AllRecsComplete(DateRecFound, _
+                            SQRecFound, _
+                            No1RecFound, _
+                            No2RecFound, _
+                            No3RecFound, _
+                            No4RecFound, _
+                            OralReviewRecFound) Then
+            CheckRecordTypeAndActAccordingly = True
+            UpdateDB OneWeeksTMSSchedule, OralReviewRecFound
+            '
+            'Initialise structure for next logical group...
+            '
+            OneWeeksTMSSchedule = InitSchedRec(0, "", 0, "", "", "", "", "", "", "", "", "", "", False, "")
+            
+            DateRecFound = False
+            SQRecFound = False
+            No1RecFound = False
+            No2RecFound = False
+            No3RecFound = False
+            No4RecFound = False
+            OralReviewRecFound = False
+            
+            CurrentAssignmentDate = CurrentAssignmentDate + 7
+            
+        Else
+            CheckRecordTypeAndActAccordingly = False
+        End If
+    Case InputRecord = vbCr Or InputRecord = "" Or InputRecord = vbLf
+         'Do nothing
+    Case Left(InputRecord, 10) = "theocratic" Or Left(InputRecord, 10) = "Theocratic" Or _
+         Left(InputRecord, 10) = "THEOCRATIC"
+         'Do nothing
+    Case Else
+        CheckRecordTypeAndActAccordingly = False
+        Exit Function
+    End Select
+    
+    End With
+
+    Exit Function
+    
+ErrorTrap:
+    EndProgram
+    
+End Function
+Private Function ProcessTabDelimitedRow(InputRecord As String, _
+                                        CurrentAssignmentDate As Date) As Boolean
+On Error GoTo ErrorTrap
+
+Static OneWeeksTMSSchedule As TMSScheduleRecord
+Dim RowDetails() As String, TempStrArray() As String
+Dim i As Long
+Static OralReviewRecFound As Boolean
+
+    DoEvents
+    '
+    'Double-up the quotes.
+    '
+    InputRecord = DoubleUpSingleQuotes(InputRecord)
+    
+    ProcessTabDelimitedRow = True
+    
+    '
+    'Split out each chunk to an element of the array
+    '
+    RowDetails() = Split(InputRecord, vbTab)
+    
+    If UBound(RowDetails) <> 11 Then 'wrong no of columns
+        ProcessTabDelimitedRow = False
+        Exit Function
+    End If
+    
+    'remove leading/trailing spaces from each field and check...
+    For i = 0 To 11
+        RowDetails(i) = Trim$(RowDetails(i))
+        If RowDetails(i) = "" Then
+            ProcessTabDelimitedRow = False
+            Exit Function
+        End If
+    Next i
+    
+    If UCase$(RowDetails(0)) = "DATE" Then 'file header
+        Exit Function
+    End If
+    
+    With OneWeeksTMSSchedule
+    
+    'Assignment date
+    RowDetails(0) = Replace(RowDetails(0), ".", "/")
+    RowDetails(0) = Replace(RowDetails(0), ":", "/")
+    TempStrArray() = Split(RowDetails(0), "/")
+    If UBound(TempStrArray) <> 2 Then 'dodgy date
+        ProcessTabDelimitedRow = False
+        Exit Function
+    End If
+    For i = 0 To 2
+        If Not IsNumber(TempStrArray(i), False, False, False) Then
+            ProcessTabDelimitedRow = False
+            Exit Function
+        End If
+    Next i
+    If Not ValidDate(RowDetails(0)) Then
+        ProcessTabDelimitedRow = False
+        Exit Function
+    End If
+    
+    .TMSUDT_AssignmentDate = CDate(Format$(RowDetails(0), "dd/mm/yyyy"))
+    
+    If .TMSUDT_AssignmentDate <> CurrentAssignmentDate Then
+        ProcessTabDelimitedRow = False
+        Exit Function
+    End If
+    
+    'Bible Highlights
+    .TMSUDT_BHSource = RowDetails(1)
+    
+    'Song
+    .TMSUDT_SongNo = RowDetails(2)
+    If Not IsNumber(RowDetails(2), False, False, False) Then
+        ProcessTabDelimitedRow = False
+        Exit Function
+    End If
+    
+    
+    'SQ
+    .TMSUDT_SQTheme = RowDetails(3)
+    .TMSUDT_SQSource = Replace$(RowDetails(4), Chr$(167), "pp")
+    .TMSUDT_SQSource = Replace$(RowDetails(4), Chr$(182), "pp")
+    
+    '#1
+    .TMSUDT_No1Theme = RowDetails(5)
+    .TMSUDT_No1Source = Replace$(RowDetails(6), Chr$(167), "pp")
+    .TMSUDT_No1Source = Replace$(RowDetails(6), Chr$(182), "pp")
+    
+    If UCase$(RowDetails(5)) = "ORAL REVIEW" Then
+        OralReviewRecFound = True
+        .TMSUDT_OralReview = "Oral Review"
+    Else
+        OralReviewRecFound = False
+    End If
+    
+    '#2
+    .TMSUDT_No2Theme = "Reading Assignment"
+    .TMSUDT_No2Source = RowDetails(7)
+    
+    '#3
+    .TMSUDT_No3Theme = RowDetails(8)
+    .TMSUDT_No3Source = Replace$(RowDetails(9), Chr$(167), "pp")
+    .TMSUDT_No3Source = Replace$(RowDetails(9), Chr$(182), "pp")
+    
+    '#4
+    .TMSUDT_No4Theme = RowDetails(10)
+    .TMSUDT_No4Source = Replace$(RowDetails(11), Chr$(167), "pp")
+    .TMSUDT_No4Source = Replace$(RowDetails(11), Chr$(182), "pp")
+        
+    If Left(.TMSUDT_No4Theme, 1) = "*" Then
+        .TMSUDT_BroOnlyForNo4 = True
+        mbBroOnlyTalkFound = True
+    Else
+        .TMSUDT_BroOnlyForNo4 = False
+    End If
+        
+    'Save record
+    UpdateDB OneWeeksTMSSchedule, OralReviewRecFound
+    
+    '
+    'Initialise structure for next logical group...
+    '
+    OneWeeksTMSSchedule = InitSchedRec(0, "", 0, "", "", "", "", "", "", "", "", "", "", False, "")
+        
+    OralReviewRecFound = False
+    
+    CurrentAssignmentDate = CurrentAssignmentDate + 7
+    
+        
+    End With
+
+    Exit Function
+    
+ErrorTrap:
+    EndProgram
+    
+End Function
+
+Function InitSchedRec(TMSAssignmentDate As Date, _
+                        TMSBHSource As String, _
+                        TMSSongNo As Long, _
+                        TMSSQTheme As String, _
+                        TMSSQSource As String, _
+                        TMSNo1Theme As String, _
+                        TMSNo1Source As String, _
+                        TMSNo2Theme As String, _
+                        TMSNo2Source As String, _
+                        TMSNo3Theme As String, _
+                        TMSNo3Source As String, _
+                        TMSNo4Theme As String, _
+                        TMSNo4Source As String, _
+                        TMSBroOnly As Boolean, _
+                        TMSOralReview As String) As TMSScheduleRecord
+On Error GoTo ErrorTrap
+
+    With InitSchedRec
+    .TMSUDT_AssignmentDate = TMSAssignmentDate
+    .TMSUDT_BHSource = TMSBHSource
+    .TMSUDT_No1Source = TMSNo1Source
+    .TMSUDT_No1Theme = TMSNo1Theme
+    .TMSUDT_No2Source = TMSNo2Source
+    .TMSUDT_No2Theme = TMSNo2Theme
+    .TMSUDT_No3Source = TMSNo3Source
+    .TMSUDT_No3Theme = TMSNo3Theme
+    .TMSUDT_No4Source = TMSNo4Source
+    .TMSUDT_No4Theme = TMSNo4Theme
+    .TMSUDT_SongNo = TMSSongNo
+    .TMSUDT_SQTheme = TMSSQTheme
+    .TMSUDT_SQSource = TMSSQSource
+    .TMSUDT_OralReview = TMSOralReview
+    .TMSUDT_BroOnlyForNo4 = TMSBroOnly
+    End With
+
+    Exit Function
+    
+ErrorTrap:
+    EndProgram
+    
+End Function
+
+Private Function IsDateRecord(TheString) As Boolean
+On Error GoTo ErrorTrap
+
+    Select Case Left(TheString, 3)
+    Case "Jan", _
+        "Feb", _
+        "Mar", _
+        "Apr", _
+        "May", _
+        "Jun", _
+        "Jul", _
+        "Aug", _
+        "Sep", _
+        "Oct", _
+        "Nov", _
+        "Dec"
+            IsDateRecord = True
+    Case Else
+        IsDateRecord = False
+    End Select
+
+    Exit Function
+    
+ErrorTrap:
+    EndProgram
+End Function
+
+Private Sub AddRecordToDB(AssignmentDate As Date, TalkNo As String, TaskNo As Long, TalkSeqNum As Long, _
+                            TalkTheme As String, SourceMaterial As String, Difficulty As Byte, BroOnly As Boolean)
+On Error GoTo ErrorTrap
+
+    CMSDB.Execute "INSERT INTO tblTMSItems " & _
+                      "(AssignmentDate, TalkNo, " & _
+                      "TaskNo, TalkSeqNum, " & _
+                        "TalkTheme, " & _
+                        "SourceMaterial, DifficultyRating0to5, " & _
+                        "BrotherOnly) " & _
+                      "VALUES (#" & Format(AssignmentDate, "mm/dd/yyyy") & "#, '" & TalkNo & "', " & TaskNo & ", " & TalkSeqNum & ", '" & _
+                      TalkTheme & "', '" & SourceMaterial & "', " & Difficulty & ", " & _
+                      BroOnly & ")"
+    
+    Exit Sub
+    
+ErrorTrap:
+    EndProgram
+End Sub
+
+
+Private Function AcquireTheTheme(TheRecord As String, AfterString, BeforeString) As String
+On Error GoTo ErrorTrap
+Dim RightChunk As String, LeftChunk As String, PosOfThemeEnd As Long
+    
+    RightChunk = Right(TheRecord, Len(TheRecord) - Len(AfterString))
+    
+    If RightChunk = "" Then
+        AcquireTheTheme = ""
+        Exit Function
+    End If
+    
+    PosOfThemeEnd = InStr(1, RightChunk, BeforeString)
+    
+    If PosOfThemeEnd = 0 Then
+        'ie there's no source material
+        AcquireTheTheme = RightChunk
+    Else
+        AcquireTheTheme = Left(RightChunk, PosOfThemeEnd - 1)
+    End If
+        
+    
+    If Left(AcquireTheTheme, 1) = ":" Then
+        AcquireTheTheme = Right(AcquireTheTheme, Len(AcquireTheTheme) - 1)
+    End If
+    
+    AcquireTheTheme = Trim(AcquireTheTheme)
+    
+    Exit Function
+    
+ErrorTrap:
+    EndProgram
+End Function
+
+Private Function AcquireTheSourceMaterial(TheRecord As String, AfterString, BeforeString) As String
+On Error GoTo ErrorTrap
+Dim RightChunk As String, LeftChunk As String, PosOfSourceStart As Long
+    
+    If AfterString <> "No. 2" Then
+        PosOfSourceStart = InStr(1, TheRecord, AfterString)
+    Else
+        PosOfSourceStart = Len(AfterString)
+    End If
+        
+    RightChunk = Right(TheRecord, Len(TheRecord) - PosOfSourceStart)
+    
+    If Len(RightChunk) > 2 Then
+        If Right(RightChunk, 1) <> ")" And AfterString <> "No. 2" Then
+            AcquireTheSourceMaterial = ""
+            Exit Function
+        End If
+    End If
+    
+    If AfterString <> "No. 2" Then
+        AcquireTheSourceMaterial = Left(RightChunk, Len(RightChunk) - 1)
+    Else
+        AcquireTheSourceMaterial = Trim(RightChunk)
+    End If
+    
+    '
+    'Get rid of the funny paragraph markers and replace with "pp"
+    '
+    AcquireTheSourceMaterial = Replace(AcquireTheSourceMaterial, Chr(182), "pp")
+    AcquireTheSourceMaterial = Replace(AcquireTheSourceMaterial, "-", " - ")
+    If Left(AcquireTheSourceMaterial, 1) = ":" Then
+        AcquireTheSourceMaterial = Trim(Right(AcquireTheSourceMaterial, Len(AcquireTheSourceMaterial) - 1))
+    End If
+    
+    
+    Exit Function
+    
+ErrorTrap:
+    EndProgram
+End Function
+
+
+Public Property Get TMSWeeksItems() As String
+    TMSWeeksItems = theitems
+End Property
+
+Public Property Let TMSWeeksItems(ByVal vNewValue As String)
+    theitems = vNewValue
+End Property
+
+Public Property Get TheTMSItemFilePath() As String
+    TheTMSItemFilePath = FilePath
+End Property
+
+Public Property Let TheTMSItemFilePath(ByVal vNewValue As String)
+    FilePath = vNewValue
+End Property
+
+Private Function AllRecsComplete(DateRecFound As Boolean, _
+                            SQRecFound As Boolean, _
+                            No1RecFound As Boolean, _
+                            No2RecFound As Boolean, _
+                            No3RecFound As Boolean, _
+                            No4RecFound As Boolean, _
+                            OralReviewRecFound As Boolean) As Boolean
+    On Error GoTo ErrorTrap
+
+    '
+    'Reached end of logical grouping. Are all values filled?
+    '
+        If OralReviewRecFound Then
+            If DateRecFound And SQRecFound Then
+                AllRecsComplete = True
+            Else
+                AllRecsComplete = False
+                Exit Function
+            End If
+        Else
+            If DateRecFound And SQRecFound And No1RecFound And No2RecFound And _
+                No3RecFound And No4RecFound Then
+                AllRecsComplete = True
+            Else
+                AllRecsComplete = False
+                Exit Function
+            End If
+        End If
+    
+    Exit Function
+    
+ErrorTrap:
+    EndProgram
+End Function
+
+Private Sub UpdateDB(TheWeeksItems As TMSScheduleRecord, OralReviewRecFound As Boolean)
+    On Error GoTo ErrorTrap
+
+    With TheWeeksItems
+
+    '
+    'Now add records to tblTMSItems for each TalkNo in turn...
+    '
+    AddRecordToDB .TMSUDT_AssignmentDate, "P", 47, 0, "Opening Prayer", "Song " & CStr(.TMSUDT_SongNo), 0, False
+    AddRecordToDB .TMSUDT_AssignmentDate, "S", 33, 1, .TMSUDT_SQTheme, .TMSUDT_SQSource, 0, False
+    AddRecordToDB .TMSUDT_AssignmentDate, "B", 34, 3, "Bible Highlights", .TMSUDT_BHSource, 0, False
+    
+    If Not OralReviewRecFound Then
+        AddRecordToDB .TMSUDT_AssignmentDate, "1", 35, 2, .TMSUDT_No1Theme, .TMSUDT_No1Source, 0, False
+        
+        AddRecordToDB .TMSUDT_AssignmentDate, "2", 36, 4, .TMSUDT_No2Theme, .TMSUDT_No2Source, 0, False
+        
+        If .TMSUDT_No3Source = "" Then
+            AddRecordToDB .TMSUDT_AssignmentDate, "3", 39, 5, .TMSUDT_No3Theme, .TMSUDT_No3Source, 0, False
+        Else
+            AddRecordToDB .TMSUDT_AssignmentDate, "3", 38, 5, .TMSUDT_No3Theme, .TMSUDT_No3Source, 0, False
+        End If
+    
+        If .TMSUDT_No4Source = "" Then
+            AddRecordToDB .TMSUDT_AssignmentDate, "4", 40, 6, .TMSUDT_No4Theme, .TMSUDT_No4Source, 0, .TMSUDT_BroOnlyForNo4
+        Else
+            AddRecordToDB .TMSUDT_AssignmentDate, "4", 41, 6, .TMSUDT_No4Theme, .TMSUDT_No4Source, 0, .TMSUDT_BroOnlyForNo4
+        End If
+    Else
+        AddRecordToDB .TMSUDT_AssignmentDate, "R", 86, 4, "Oral Review", "Oral Review", 0, False
+    End If
+        
+    End With
+    Exit Sub
+    
+ErrorTrap:
+    EndProgram
+End Sub
+
+Public Sub AnyUnprintedTMSSlips()
+On Error GoTo ErrorTrap
+Dim rstCheckTMS As Recordset, rstCheckTMS2 As Recordset, SQLStr As String, NoDays As Long
+
+    Select Case True
+    Case PersonHasAccess(gCurrentUserCode, CompleteAccess), _
+         PersonHasAccess(gCurrentUserCode, TMSOverseer), _
+         PersonHasAccess(gCurrentUserCode, TMSPrinting)
+         
+         NoDays = GlobalParms.GetValue("TMSWarnOfUnprintedSlipsDays", "NumVal")
+         
+         If NoDays > 0 Then
+         
+            SQLStr = "SELECT * " & _
+                   "FROM tblTMSSchedule " & _
+                   "WHERE AssignmentDate BETWEEN #" & Format(Now, "mm/dd/yyyy") & "# " & _
+                   "AND #" & Format(DateAdd("d", NoDays, date), "mm/dd/yyyy") & "# " & _
+                   "AND SlipPrinted = FALSE " & _
+                   "AND PersonID <> 0 " & _
+                   "AND TalkNo IN ('S', '1', 'B', '2', '3', '4')"
+            
+            Set rstCheckTMS = CMSDB.OpenRecordset(SQLStr, dbOpenSnapshot)
+            
+            If Not rstCheckTMS.BOF Then
+               MsgBox "Theocratic Ministry School Assignment Slips are due to be printed", _
+               vbOKOnly + vbInformation, AppName
+            Else
+               SQLStr = "SELECT * " & _
+                       "FROM tblTMSItems " & _
+                       "WHERE AssignmentDate BETWEEN #" & Format(Now, "mm/dd/yyyy") & "# " & _
+                       "AND #" & Format(DateAdd("d", NoDays, date), "mm/dd/yyyy") & "# " & _
+                       "AND TalkNo IN ('S', '1', 'B', '2', '3', '4')"
+               
+               Set rstCheckTMS = CMSDB.OpenRecordset(SQLStr, dbOpenSnapshot)
+               
+               SQLStr = "SELECT * " & _
+                       "FROM tblTMSSchedule " & _
+                       "WHERE AssignmentDate BETWEEN #" & Format(Now, "mm/dd/yyyy") & "# " & _
+                       "AND #" & Format(DateAdd("d", NoDays, date), "mm/dd/yyyy") & "# " & _
+                       "AND TalkNo IN ('S', '1', 'B', '2', '3', '4')"
+               
+               Set rstCheckTMS2 = CMSDB.OpenRecordset(SQLStr, dbOpenDynaset)
+               
+               With rstCheckTMS
+               If Not .BOF Then
+                   .MoveFirst
+                   Do Until .EOF
+                       rstCheckTMS2.FindFirst "AssignmentDate = #" & Format(!AssignmentDate, "mm/dd/yyyy") & "# " & _
+                                               "AND TalkNo = '" & !TalkNo & "' AND PersonID <> 0"
+                                               
+                       If rstCheckTMS2.NoMatch Then
+                           If Not IsCircuitOrDistrictAssemblyWeek(!AssignmentDate) Then
+                           
+                                Dim a As Boolean, b As Boolean, c As Boolean, d As Boolean
+                                Dim IsCOVisit As Boolean
+                                CheckForCOOrAssembly a, b, c, IsCOVisit, d, !AssignmentDate
+                                
+                                If Not IsCOVisit And _
+                                        (!TalkNo = "S" Or _
+                                         !TalkNo = "1" Or _
+                                         !TalkNo = "B") Then
+                                
+                                    MsgBox "There are unassigned Theocratic Ministry School items due for printing", _
+                                    vbOKOnly + vbInformation, AppName
+                                End If
+                            End If
+                           Exit Do
+                       End If
+                       .MoveNext
+                   Loop
+                   rstCheckTMS2.Close
+               Else
+                   MsgBox "You need to load new Theocratic Ministry School assignments", _
+                   vbOKOnly + vbInformation, AppName
+               End If
+               End With
+            End If
+            rstCheckTMS.Close
+         End If
+    End Select
+    
+    Exit Sub
+    
+ErrorTrap:
+    EndProgram
+
+End Sub
+
+Public Sub ShowIndiviualNextPrevData(TheGrid As MSFlexGrid, PersonID As Long, CurrentAssignmentDate As Date)
+On Error GoTo ErrorTrap
+Dim OneStudentsDates As TMSPersonAndNextPrevDates
+Dim PrevDates() As Variant, NextDates() As Variant, n As Integer
+
+    '
+    'Display single row's next/prev dates on frmTMSInsertStudent if
+    ' chkShowNextPrevDates is off
+    '
+    If frmTMSInsertStudent.chkShowNextPrevDates = vbChecked Then Exit Sub
+
+    '
+    'Load all next/prev data to array
+    '
+    OneStudentsDates.NextPrevInfo(0) = CongregationMember.TMSPrevDateFAST(PersonID, "P", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(1) = CongregationMember.TMSPrevDateFAST(PersonID, "S", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(2) = CongregationMember.TMSPrevDateFAST(PersonID, "1", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(3) = CongregationMember.TMSPrevDateFAST(PersonID, "B", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(4) = CongregationMember.TMSPrevDateFAST(PersonID, "2", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(5) = CongregationMember.GetTMSSchoolNoForInsertForm
+    OneStudentsDates.NextPrevInfo(6) = CongregationMember.TMSPrevDateFAST(PersonID, "3", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(7) = CongregationMember.GetTMSSchoolNoForInsertForm
+    OneStudentsDates.NextPrevInfo(8) = CongregationMember.TMSPrevDateFAST(PersonID, "4", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(9) = CongregationMember.GetTMSSchoolNoForInsertForm
+    OneStudentsDates.NextPrevInfo(10) = CongregationMember.TMSPrevDateFAST(PersonID, "Asst", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(11) = CongregationMember.GetTMSSchoolNoForInsertForm
+    OneStudentsDates.NextPrevInfo(12) = CongregationMember.TMSNextDateFAST(PersonID, "P", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(13) = CongregationMember.TMSNextDateFAST(PersonID, "S", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(14) = CongregationMember.TMSNextDateFAST(PersonID, "1", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(15) = CongregationMember.TMSNextDateFAST(PersonID, "B", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(16) = CongregationMember.TMSNextDateFAST(PersonID, "2", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(17) = CongregationMember.GetTMSSchoolNoForInsertForm
+    OneStudentsDates.NextPrevInfo(18) = CongregationMember.TMSNextDateFAST(PersonID, "3", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(19) = CongregationMember.GetTMSSchoolNoForInsertForm
+    OneStudentsDates.NextPrevInfo(20) = CongregationMember.TMSNextDateFAST(PersonID, "4", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(21) = CongregationMember.GetTMSSchoolNoForInsertForm
+    OneStudentsDates.NextPrevInfo(22) = CongregationMember.TMSNextDateFAST(PersonID, "Asst", CurrentAssignmentDate)
+    OneStudentsDates.NextPrevInfo(23) = CongregationMember.GetTMSSchoolNoForInsertForm
+
+    '
+    'Put array contents on the grid
+    '
+    With TheGrid
+    .TextMatrix(.Row, PrevPrayer) = OneStudentsDates.NextPrevInfo(0)
+    .TextMatrix(.Row, PrevSQ) = OneStudentsDates.NextPrevInfo(1)
+    .TextMatrix(.Row, PrevNo1) = OneStudentsDates.NextPrevInfo(2)
+    .TextMatrix(.Row, PrevBH) = OneStudentsDates.NextPrevInfo(3)
+    .TextMatrix(.Row, PrevNo2) = OneStudentsDates.NextPrevInfo(4)
+    .TextMatrix(.Row, PrevNo2School) = OneStudentsDates.NextPrevInfo(5)
+    .TextMatrix(.Row, PrevNo3) = OneStudentsDates.NextPrevInfo(6)
+    .TextMatrix(.Row, PrevNo3School) = OneStudentsDates.NextPrevInfo(7)
+    .TextMatrix(.Row, PrevNo4) = OneStudentsDates.NextPrevInfo(8)
+    .TextMatrix(.Row, PrevNo4School) = OneStudentsDates.NextPrevInfo(9)
+    .TextMatrix(.Row, PrevAsst) = OneStudentsDates.NextPrevInfo(10)
+    .TextMatrix(.Row, PrevAsstSchool) = OneStudentsDates.NextPrevInfo(11)
+    .TextMatrix(.Row, NextPrayer) = OneStudentsDates.NextPrevInfo(12)
+    .TextMatrix(.Row, NextSQ) = OneStudentsDates.NextPrevInfo(13)
+    .TextMatrix(.Row, NextNo1) = OneStudentsDates.NextPrevInfo(14)
+    .TextMatrix(.Row, NextBH) = OneStudentsDates.NextPrevInfo(15)
+    .TextMatrix(.Row, NextNo2) = OneStudentsDates.NextPrevInfo(16)
+    .TextMatrix(.Row, NextNo2School) = OneStudentsDates.NextPrevInfo(17)
+    .TextMatrix(.Row, NextNo3) = OneStudentsDates.NextPrevInfo(18)
+    .TextMatrix(.Row, NextNo3School) = OneStudentsDates.NextPrevInfo(19)
+    .TextMatrix(.Row, NextNo4) = OneStudentsDates.NextPrevInfo(20)
+    .TextMatrix(.Row, NextNo4School) = OneStudentsDates.NextPrevInfo(21)
+    .TextMatrix(.Row, NextAsst) = OneStudentsDates.NextPrevInfo(22)
+    .TextMatrix(.Row, NextAsstSchool) = OneStudentsDates.NextPrevInfo(23)
+    End With
+
+     '
+     'Now highlight in green the most recent
+     ' next & previous talks given by each student. This aids user in
+     ' spreading talks more evenly.
+     '
+     With TheGrid
+     '
+     'Put pertinent PrevDates into an array
+     ' (Must change format since can only use variants in Array function)
+     '
+     PrevDates = Array(Format(OneStudentsDates.NextPrevInfo(1), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(2), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(3), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(4), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(6), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(8), "yyyy/mm/dd"))
+     
+     '
+     'Sort desc
+     '
+     BubbleSort PrevDates, , True
+     
+    If PrevDates(0) <> "" Then
+        Select Case Format(PrevDates(0), "dd/mm/yy")
+        Case OneStudentsDates.NextPrevInfo(1)
+           .col = PrevSQ
+           .CellBackColor = PrevTalkColour
+        Case OneStudentsDates.NextPrevInfo(2)
+           .col = PrevNo1
+           .CellBackColor = PrevTalkColour
+        Case OneStudentsDates.NextPrevInfo(3)
+           .col = PrevBH
+           .CellBackColor = PrevTalkColour
+        Case OneStudentsDates.NextPrevInfo(4)
+           .col = PrevNo2
+           .CellBackColor = PrevTalkColour
+           .col = PrevNo2School
+           .CellBackColor = PrevTalkColour
+        Case OneStudentsDates.NextPrevInfo(6)
+           .col = PrevNo3
+           .CellBackColor = PrevTalkColour
+           .col = PrevNo3School
+           .CellBackColor = PrevTalkColour
+        Case OneStudentsDates.NextPrevInfo(8)
+           .col = PrevNo4
+           .CellBackColor = PrevTalkColour
+           .col = PrevNo4School
+           .CellBackColor = PrevTalkColour
+        End Select
+    End If
+    
+     '
+     'Put pertinent NextDates into an array
+     ' (Must change format since can only use variants in Array function)
+     '
+     NextDates = Array(Format(OneStudentsDates.NextPrevInfo(13), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(14), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(15), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(16), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(18), "yyyy/mm/dd"), _
+                    Format(OneStudentsDates.NextPrevInfo(20), "yyyy/mm/dd"))
+     
+     '
+     'Sort asc
+     '
+     BubbleSort NextDates, , False
+     
+     '
+     'Find the minimum non-blank date
+     '
+    For n = 0 To 5
+        If NextDates(n) <> "" Then
+            Exit For
+        End If
+    Next n
+     
+    If n > 5 Then
+        n = 5
+    End If
+     
+    If NextDates(n) <> "" Then
+        Select Case Format(NextDates(n), "dd/mm/yy")
+        Case OneStudentsDates.NextPrevInfo(13)
+           .col = NextSQ
+           .CellBackColor = NextTalkColour
+        Case OneStudentsDates.NextPrevInfo(14)
+           .col = NextNo1
+           .CellBackColor = NextTalkColour
+        Case OneStudentsDates.NextPrevInfo(15)
+           .col = NextBH
+           .CellBackColor = NextTalkColour
+        Case OneStudentsDates.NextPrevInfo(16)
+           .col = NextNo2
+           .CellBackColor = NextTalkColour
+           .col = NextNo2School
+           .CellBackColor = NextTalkColour
+        Case OneStudentsDates.NextPrevInfo(18)
+           .col = NextNo3
+           .CellBackColor = NextTalkColour
+           .col = NextNo3School
+           .CellBackColor = NextTalkColour
+        Case OneStudentsDates.NextPrevInfo(20)
+           .col = NextNo4
+           .CellBackColor = NextTalkColour
+           .col = NextNo4School
+           .CellBackColor = NextTalkColour
+        End Select
+    End If
+    End With
+
+    Exit Sub
+    
+ErrorTrap:
+    EndProgram
+End Sub
+
+
+Public Sub AddWeekNumbersToItems(TheYear As Integer)
+Dim rstItems As Recordset, i As Long, OralReviewFound As Boolean
+On Error GoTo ErrorTrap
+
+    Set rstItems = CMSDB.OpenRecordset("SELECT * " & _
+                                       "FROM tblTMSItems " & _
+                                       "WHERE Year(AssignmentDate) = " & TheYear, _
+                                       dbOpenDynaset)
+    
+    If rstItems.BOF Then
+        Exit Sub
+    End If
+    
+    With rstItems
+    
+    Do Until .EOF
+        If !TalkSeqNum = 0 Then
+            If OralReviewFound Then
+                i = 1
+                OralReviewFound = False
+            Else
+                i = i + 1
+            End If
+        End If
+        If !TalkNo = "R" Then
+            OralReviewFound = True
+        End If
+        .Edit
+        !weekno = i
+        .Update
+        .MoveNext
+    Loop
+    
+    End With
+    
+    Exit Sub
+    
+ErrorTrap:
+    EndProgram
+End Sub
